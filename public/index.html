@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow — Project Management</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    if (window.tailwind) tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50:'#eff6ff',100:'#dbeafe',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',800:'#1e40af',900:'#1e3a8a' }
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://js.stripe.com/v3/"></script>
+  <style type="text/tailwindcss">
+    .card { @apply bg-white rounded-xl shadow-sm border border-gray-100 p-6; }
+    .btn-primary { @apply inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50; }
+    .btn-secondary { @apply inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors; }
+    .btn-danger { @apply inline-flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors; }
+    .input { @apply w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent; }
+    .label { @apply block text-sm font-medium text-gray-700 mb-1; }
+    .badge-high { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700; }
+    .badge-medium { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-700; }
+    .badge-low { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700; }
+    .modal-overlay { @apply fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4; }
+    .modal-box { @apply bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-screen overflow-y-auto; }
+    .sidebar-item { @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer; }
+    .sidebar-active { @apply bg-blue-50 text-blue-700; }
+    .sidebar-inactive { @apply text-gray-600 hover:bg-gray-100 hover:text-gray-900; }
+    .task-card { @apply bg-white border border-gray-200 rounded-lg p-3 mb-2 cursor-pointer hover:shadow-md transition-shadow; }
+    body { background-color: #f8fafc; }
+    .kanban-col { min-height: 400px; transition: background 0.15s, box-shadow 0.15s; }
+    .task-card[draggable="true"] { cursor: grab; }
+    .task-card[draggable="true"]:active { cursor: grabbing; }
+    #pkg-modal-root { position: fixed; inset: 0; z-index: 9999; pointer-events: none; }
+    #pkg-modal-root:not(:empty) { pointer-events: auto; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/assets/js/api.js?v=4"></script>
+  <script src="/assets/js/utils.js?v=4"></script>
+  <script src="/assets/js/pages/login.js?v=4"></script>
+  <script src="/assets/js/pages/subscribe.js?v=4"></script>
+  <script src="/assets/js/pages/admin/dashboard.js?v=4"></script>
+  <script src="/assets/js/pages/admin/companies.js?v=4"></script>
+  <script src="/assets/js/pages/admin/packages.js?v=4"></script>
+  <script src="/assets/js/pages/admin/tokens.js?v=4"></script>
+  <script src="/assets/js/pages/admin/managers.js?v=4"></script>
+  <script src="/assets/js/pages/admin/subscription-requests.js?v=4"></script>
+  <script src="/assets/js/pages/manager/dashboard.js?v=4"></script>
+  <script src="/assets/js/pages/manager/users.js?v=4"></script>
+  <script src="/assets/js/pages/manager/workflows.js?v=4"></script>
+  <script src="/assets/js/pages/manager/tasks.js?v=4"></script>
+  <script src="/assets/js/pages/manager/task-detail.js?v=4"></script>
+  <script src="/assets/js/pages/employee/dashboard.js?v=4"></script>
+  <script src="/assets/js/pages/employee/task-detail.js?v=4"></script>
+  <script src="/assets/js/app.js?v=4"></script>
+</body>
+</html>

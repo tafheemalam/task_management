@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(dir \"$env:LOCALAPPDATA\\\\nvm\" 2>&1; dir \"C:\\\\nvm\" 2>&1; dir \"C:\\\\nodejs\" 2>&1; where.exe node 2>&1; Get-ChildItem \"G:\\\\Task Management\" 2>&1)",
+      "PowerShell(& \"C:\\\\xampp2.0\\\\mysql\\\\bin\\\\mysqladmin.exe\" -u root status 2>&1)",
+      "PowerShell(Start-Process \"C:\\\\xampp2.0\\\\mysql\\\\bin\\\\mysqld.exe\" -ArgumentList \"--defaults-file=C:\\\\xampp2.0\\\\mysql\\\\bin\\\\my.ini\", \"--standalone\" -WindowStyle Hidden)",
+      "PowerShell(& \"C:\\\\xampp2.0\\\\mysql\\\\bin\\\\mysql.exe\" -u root -e \"source G:/Task Management/database.sql\" 2>&1)",
+      "PowerShell(& \"C:\\\\xampp2.0\\\\mysql\\\\bin\\\\mysql.exe\" -u root taskmanagement -e \"SELECT id, name, email, role FROM users; SELECT id, name FROM packages;\" 2>&1)",
+      "PowerShell(& \"C:\\\\xampp2.0\\\\mysql\\\\bin\\\\mysql.exe\" -u root taskmanagement -e \"UPDATE users SET password='\\\\$2y\\\\$10\\\\$NW8e.KIa9UjsWcBiu9g34el3xPJlxA5ZGML6qxqa1ffY8/261fzkq' WHERE email='admin@taskmanager.com';\" 2>&1)",
+      "PowerShell(Start-Process \"http://localhost:8080\")",
+      "Bash(Get-ChildItem -Path \"g:\\\\Task Management\" -Recurse -Force)",
+      "Bash(Select-Object -Property FullName, PSIsContainer)",
+      "Bash(ConvertTo-Csv -NoTypeInformation)",
+      "PowerShell(Get-ChildItem -Path \"g:\\\\Task Management\" -Recurse -Force | Select-Object -Property FullName | ForEach-Object { $_.FullName } | head -100)",
+      "Bash(Get-ChildItem -Path \"g:\\\\Task Management\" -Recurse)",
+      "Bash(Select-Object -Property FullName)",
+      "Bash(Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem -Path \"g:\\\\Task Management\" -Recurse | ForEach-Object { $_.FullName })",
+      "Bash(\"C:\\\\xampp2.0\\\\mysql\\\\bin\\\\mysql.exe\" -u root taskmanagement -e \"CREATE TABLE IF NOT EXISTS task_attachments \\(id INT AUTO_INCREMENT PRIMARY KEY, task_id INT NOT NULL, uploaded_by INT NOT NULL, filename VARCHAR\\(255\\) NOT NULL, original_name VARCHAR\\(255\\) NOT NULL, mime_type VARCHAR\\(100\\), file_size INT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY \\(task_id\\) REFERENCES tasks\\(id\\) ON DELETE CASCADE, FOREIGN KEY \\(uploaded_by\\) REFERENCES users\\(id\\) ON DELETE CASCADE\\); ALTER TABLE subscription_requests ADD COLUMN IF NOT EXISTS payment_intent_id VARCHAR\\(255\\) NULL, ADD COLUMN IF NOT EXISTS payment_status ENUM\\('pending','paid','failed'\\) NOT NULL DEFAULT 'pending', ADD COLUMN IF NOT EXISTS amount_paid DECIMAL\\(10,2\\) NULL;\")",
+      "Bash(\"C:\\\\xampp2.0\\\\php\\\\php.exe\" -r \"echo phpversion\\(\\);\")",
+      "Bash(\"C:\\\\xampp2.0\\\\mysql\\\\bin\\\\mysql.exe\" -u root taskmanagement -e \"ALTER TABLE subscription_requests MODIFY COLUMN payment_status ENUM\\('pending','paid','failed','trial'\\) NOT NULL DEFAULT 'pending'; ALTER TABLE subscription_requests ADD COLUMN IF NOT EXISTS is_trial TINYINT\\(1\\) NOT NULL DEFAULT 0;\")"
+    ]
+  }
+}
