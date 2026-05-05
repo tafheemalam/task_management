@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "outputDirectory": "public",
+  "functions": {
+    "api/index.php": {
+      "runtime": "vercel-php@0.7.1"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index.php" }
+  ]
+}
