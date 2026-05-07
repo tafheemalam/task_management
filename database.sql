@@ -1,6 +1,7 @@
 -- Task Management Database Schema
-CREATE DATABASE IF NOT EXISTS taskmanagement CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE taskmanagement;
+-- Note: CREATE DATABASE / USE are intentionally omitted for cloud deployments
+-- (Railway, PlanetScale, etc. manage the database themselves).
+-- For local XAMPP run: mysql -u root -e "source database.sql"
 
 CREATE TABLE IF NOT EXISTS packages (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -134,8 +135,8 @@ CREATE TABLE IF NOT EXISTS subscription_requests (
     FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE RESTRICT
 );
 
--- Seed: default packages
-INSERT INTO packages (name, type, price, max_users, description) VALUES
+-- Seed: default packages (INSERT IGNORE skips if already exists)
+INSERT IGNORE INTO packages (name, type, price, max_users, description) VALUES
 ('Starter Monthly', 'monthly', 29.99, 10, 'Perfect for small teams'),
 ('Starter Yearly', 'yearly', 299.99, 10, 'Perfect for small teams - save 17%'),
 ('Pro Monthly', 'monthly', 79.99, 50, 'For growing businesses'),
@@ -162,5 +163,5 @@ CREATE TABLE IF NOT EXISTS task_attachments (
 -- ALTER TABLE subscription_requests ADD COLUMN amount_paid DECIMAL(10,2) NULL;
 
 -- Seed: default admin user (password: admin123)
-INSERT INTO users (name, email, password, role, company_id, can_create_tasks, is_active)
+INSERT IGNORE INTO users (name, email, password, role, company_id, can_create_tasks, is_active)
 VALUES ('System Admin', 'admin@taskmanager.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin', NULL, 0, 1);
