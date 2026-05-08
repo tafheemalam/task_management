@@ -1,2 +1,3 @@
 #!/bin/sh
-exec php -S "0.0.0.0:${PORT:-8080}" -t public router.php
+cd /app
+exec php -S "0.0.0.0:${PORT:-8080}" -t /app/public /app/router.php
