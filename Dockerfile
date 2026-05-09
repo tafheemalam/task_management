@@ -1,6 +1,5 @@
 FROM php:8.2-cli
 
-# Install PDO MySQL and curl extensions (needed for DB + Stripe)
 RUN docker-php-ext-install pdo pdo_mysql \
     && apt-get update -y \
     && apt-get install -y libcurl4-openssl-dev \
@@ -10,8 +9,10 @@ RUN docker-php-ext-install pdo pdo_mysql \
 WORKDIR /app
 COPY . .
 
-COPY entrypoint.sh /entrypoint.sh
-# Strip Windows CRLF line endings and make executable
-RUN sed -i 's/\r//' /entrypoint.sh && chmod +x /entrypoint.sh
+# Create startup script inside the image — avoids Windows CRLF issues entirely
+RUN printf '#!/bin/sh\nexec php -S "0.0.0.0:${PORT:-8080}" -t /app/public /app/router.php\n' \
+    > /start.sh && chmod +x /start.sh
 
-CMD ["/entrypoint.sh"]
+EXPOSE 8080
+
+CMD ["/start.sh"]
