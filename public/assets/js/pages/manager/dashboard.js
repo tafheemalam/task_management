@@ -136,6 +136,48 @@ function _mDrawStatus(stages) {
   });
 }
 
+function _mDrawWorkload(assignees) {
+  const wrap = document.getElementById('mc-workload-wrap');
+  if (!wrap) return;
+  if (!assignees?.length) {
+    wrap.innerHTML = '<p class="text-sm text-gray-400 py-8 text-center">No task data yet</p>';
+    return;
+  }
+  const h = Math.max(200, assignees.length * 44);
+  wrap.style.height = h + 'px';
+  wrap.innerHTML = '<canvas id="mc-workload"></canvas>';
+
+  const labels = assignees.map(a => a.assignee_name);
+  const done   = assignees.map(a => +a.done    || 0);
+  const over   = assignees.map(a => +a.overdue || 0);
+  const active = assignees.map((a, i) => Math.max(0, (+a.total || 0) - done[i] - over[i]));
+
+  _mChart('mc-workload', {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Done',    data: done,   backgroundColor: '#10b981', borderRadius: 3 },
+        { label: 'Active',  data: active, backgroundColor: '#3b82f6', borderRadius: 3 },
+        { label: 'Overdue', data: over,   backgroundColor: '#ef4444', borderRadius: 3 },
+      ],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 11 }, padding: 10, usePointStyle: true } },
+        tooltip: { callbacks: { footer: items => `Total: ${items.reduce((s,i) => s+i.raw, 0)}` } },
+      },
+      scales: {
+        x: { stacked: true, grid: { color: '#f1f5f9' }, ticks: { font: { size: 11 } } },
+        y: { stacked: true, ticks: { font: { size: 11 } } },
+      },
+    },
+  });
+}
+
 function _mDrawPriority(priorities) {
   const map = { high: 0, medium: 0, low: 0 };
   (priorities || []).forEach(p => { if (p.priority in map) map[p.priority] = +p.count; });
@@ -252,6 +294,22 @@ async function renderManagerDashboard() {
         </div>
       </div>
 
+      <!-- Team Workload chart — full width -->
+      <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <div class="flex items-start justify-between mb-4">
+          <div>
+            <h2 class="font-bold text-gray-800">Team Workload</h2>
+            <p class="text-xs text-gray-400 mt-0.5">Tasks per team member — done / active / overdue</p>
+          </div>
+          <button onclick="navigate('manager-users')" class="text-xs text-blue-600 hover:underline whitespace-nowrap">
+            Manage team →
+          </button>
+        </div>
+        <div id="mc-workload-wrap" style="position:relative;min-height:200px;">
+          <div class="animate-pulse h-32 bg-gray-100 rounded-lg"></div>
+        </div>
+      </div>
+
       <!-- Recent tasks + team -->
       <div class="grid lg:grid-cols-2 gap-6">
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -310,9 +368,10 @@ async function renderManagerDashboard() {
 
     // Draw charts
     requestAnimationFrame(() => {
-      _mDrawProjects(projStats.by_project || []);
-      _mDrawStatus(projStats.by_stage    || []);
+      _mDrawProjects(projStats.by_project  || []);
+      _mDrawStatus(projStats.by_stage      || []);
       _mDrawPriority(projStats.by_priority || []);
+      _mDrawWorkload(projStats.by_assignee || []);
     });
 
     // Recent tasks

@@ -144,6 +144,16 @@ INSERT IGNORE INTO packages (name, type, price, max_users, description) VALUES
 ('Enterprise Monthly', 'monthly', 199.99, 999, 'Unlimited users, full features'),
 ('Enterprise Yearly', 'yearly', 1999.99, 999, 'Unlimited users, full features - save 17%');
 
+CREATE TABLE IF NOT EXISTS workflow_members (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    workflow_id INT NOT NULL,
+    user_id INT NOT NULL,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY uq_wf_member (workflow_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS task_attachments (
     id INT AUTO_INCREMENT PRIMARY KEY,
     task_id INT NOT NULL,
@@ -165,3 +175,43 @@ CREATE TABLE IF NOT EXISTS task_attachments (
 -- Seed: default admin user (password: admin123)
 INSERT IGNORE INTO users (name, email, password, role, company_id, can_create_tasks, is_active)
 VALUES ('System Admin', 'admin@taskmanager.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin', NULL, 0, 1);
+
+CREATE TABLE IF NOT EXISTS tags (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL,
+    name VARCHAR(50) NOT NULL,
+    color VARCHAR(7) NOT NULL DEFAULT '#6366f1',
+    UNIQUE KEY uq_tag (company_id, name),
+    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS task_tags (
+    task_id INT NOT NULL,
+    tag_id INT NOT NULL,
+    PRIMARY KEY (task_id, tag_id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    task_id INT NOT NULL,
+    user_id INT NOT NULL,
+    action VARCHAR(100) NOT NULL,
+    detail TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    type VARCHAR(50) NOT NULL,
+    message TEXT NOT NULL,
+    task_id INT NULL,
+    is_read TINYINT(1) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+);

@@ -2,6 +2,10 @@
 let _empSelectedProject = null;
 let _empViewMode        = 'board';
 let _empDragTaskId      = null;
+let _empSortField       = 'due_date';
+let _empSortDir         = 'asc';
+let _empPage            = 1;
+const _EMP_PAGE_SIZE    = 10;
 
 // ─── Employee Dashboard ───────────────────────────────────────────────────────
 async function renderEmployeeDashboard() {
@@ -12,6 +16,8 @@ async function renderEmployeeDashboard() {
       <div id="emp-stats" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         ${[1,2,3].map(() => '<div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 animate-pulse h-24"></div>').join('')}
       </div>
+
+      <div id="emp-alerts"></div>
 
       <div>
         <div class="flex items-center justify-between mb-3">
@@ -43,7 +49,11 @@ async function renderEmployeeDashboard() {
     </div>`);
 
   try {
-    const [stats, tasks] = await Promise.all([api.employee.stats(), api.employee.listTasks()]);
+    const [stats, projectTasks, myTasks] = await Promise.all([
+      api.employee.stats(),
+      api.employee.listProjectTasks(),
+      api.employee.listTasks(),
+    ]);
 
     document.getElementById('emp-stats').innerHTML = [
       statCard('fa-list-check',   stats.my_tasks, 'My Tasks',  'blue'),
@@ -51,8 +61,9 @@ async function renderEmployeeDashboard() {
       statCard('fa-clock',        stats.overdue,  'Overdue',   'red'),
     ].join('');
 
+    // Build project cards from ALL project tasks (not just assigned)
     const projectMap = new Map();
-    tasks.forEach(t => {
+    projectTasks.forEach(t => {
       if (!t.workflow_id) return;
       if (!projectMap.has(t.workflow_id))
         projectMap.set(t.workflow_id, { id: t.workflow_id, name: t.workflow_name, total: 0, done: 0, overdue: 0 });
@@ -90,8 +101,55 @@ async function renderEmployeeDashboard() {
       ? cards.join('')
       : '<div class="col-span-3 text-sm text-gray-400 py-4">No projects yet — your manager will assign you to a project.</div>';
 
-    document.getElementById('emp-tasks').innerHTML = tasks.length
-      ? tasks.slice(0, 5).map(t => `
+    // Alert section — overdue or due today, not done
+    const today       = new Date().toISOString().split('T')[0];
+    const alertTasks  = myTasks.filter(t =>
+      t.due_date && t.due_date <= today && !['Done','Closed'].includes(t.stage_name)
+    ).sort((a, b) => a.due_date < b.due_date ? -1 : 1);
+
+    document.getElementById('emp-alerts').innerHTML = alertTasks.length ? `
+      <div class="rounded-xl border border-red-200 bg-red-50 overflow-hidden">
+        <div class="flex items-center gap-3 px-5 py-4 border-b border-red-200 bg-red-100/60">
+          <div class="w-8 h-8 rounded-full bg-red-500 flex items-center justify-center shrink-0">
+            <i class="fa-solid fa-triangle-exclamation text-white text-sm"></i>
+          </div>
+          <div>
+            <div class="font-semibold text-red-800 text-sm">
+              ${alertTasks.length} task${alertTasks.length !== 1 ? 's' : ''} need${alertTasks.length === 1 ? 's' : ''} your attention
+            </div>
+            <div class="text-xs text-red-600 mt-0.5">Due today or overdue — not yet marked as done</div>
+          </div>
+        </div>
+        <div class="divide-y divide-red-100">
+          ${alertTasks.map(t => {
+            const isToday = t.due_date === today;
+            const daysAgo = isToday ? 0 : Math.floor((Date.now() - new Date(t.due_date).getTime()) / 86400000);
+            return `
+              <div class="flex items-center gap-4 px-5 py-3.5 hover:bg-red-100/50 cursor-pointer transition-colors group"
+                   onclick="navigate('employee-task-detail',{id:${t.id}})">
+                <i class="fa-solid fa-circle-exclamation text-lg shrink-0 ${isToday ? 'text-orange-400' : 'text-red-400'}"></i>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium text-gray-800 truncate">${t.title}</div>
+                  <div class="flex items-center gap-2 mt-0.5 flex-wrap">
+                    ${priorityBadge(t.priority)}
+                    ${t.workflow_name ? `<span class="text-xs text-gray-400">${t.workflow_name}</span>` : ''}
+                  </div>
+                </div>
+                <div class="text-right shrink-0">
+                  <div class="text-xs font-semibold ${isToday ? 'text-orange-600' : 'text-red-600'}">
+                    ${isToday ? 'Due Today' : daysAgo + ' day' + (daysAgo !== 1 ? 's' : '') + ' overdue'}
+                  </div>
+                  <div class="text-xs text-gray-400 mt-0.5">${formatDate(t.due_date)}</div>
+                </div>
+                <i class="fa-solid fa-chevron-right text-red-300 group-hover:text-red-500 text-xs shrink-0 transition-colors"></i>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>` : '';
+
+    // Recent Tasks shows only tasks assigned to this employee
+    document.getElementById('emp-tasks').innerHTML = myTasks.length
+      ? myTasks.slice(0, 5).map(t => `
           <div class="flex items-center gap-4 py-3 border-b border-gray-50 last:border-0
                       cursor-pointer hover:bg-gray-50 rounded-lg px-2 -mx-2 group"
                onclick="navigate('employee-task-detail',{id:${t.id}})">
@@ -110,7 +168,7 @@ async function renderEmployeeDashboard() {
             </div>
             <i class="fa-solid fa-chevron-right text-gray-300 group-hover:text-gray-500 text-xs flex-shrink-0"></i>
           </div>`).join('')
-      : emptyState('fa-inbox', 'No tasks yet', 'Your manager will assign tasks to you');
+      : emptyState('fa-inbox', 'No assigned tasks yet', 'Your manager will assign tasks to you');
 
   } catch (err) { showToast(err.message, 'error'); }
 }
@@ -152,18 +210,35 @@ async function renderEmployeeTasks(params = {}) {
       </div>
 
       <!-- List-mode filters (hidden in board mode) -->
-      <div id="emp-list-filters" class="hidden bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-wrap gap-3 items-center">
-        <select id="emp-filter-priority" class="input w-auto text-sm" onchange="filterEmpTasks()">
-          <option value="">All Priorities</option>
-          <option value="high">🔴 High</option>
-          <option value="medium">🟡 Medium</option>
-          <option value="low">🟢 Low</option>
-        </select>
-        <select id="emp-filter-stage" class="input w-auto text-sm" onchange="filterEmpTasks()">
-          <option value="">All Stages</option>
-        </select>
-        <input id="emp-search" type="text" class="input text-sm flex-1 min-w-40"
-               placeholder="Search tasks…" oninput="filterEmpTasks()" />
+      <div id="emp-list-filters" class="hidden bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+        <div class="grid grid-cols-2 gap-3">
+          <!-- Search: flex wrapper avoids absolute-icon vs input-padding conflict -->
+          <div class="col-span-2 flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-2 bg-white
+                      focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 transition-shadow">
+            <i class="fa-solid fa-magnifying-glass text-gray-400 text-sm shrink-0"></i>
+            <input id="emp-search" type="text" class="flex-1 text-sm outline-none bg-transparent placeholder-gray-400"
+                   placeholder="Search tasks by title…" oninput="filterEmpTasks()" />
+          </div>
+          <!-- Priority & Stage -->
+          <select id="emp-filter-priority" class="input text-sm" onchange="filterEmpTasks()">
+            <option value="">All Priorities</option>
+            <option value="high">🔴 High</option>
+            <option value="medium">🟡 Medium</option>
+            <option value="low">🟢 Low</option>
+          </select>
+          <select id="emp-filter-stage" class="input text-sm" onchange="filterEmpTasks()">
+            <option value="">All Stages</option>
+          </select>
+          <!-- Due date range -->
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Due From</label>
+            <input id="emp-filter-due-from" type="date" class="input text-sm" onchange="filterEmpTasks()" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Due To</label>
+            <input id="emp-filter-due-to" type="date" class="input text-sm" onchange="filterEmpTasks()" />
+          </div>
+        </div>
       </div>
 
       <!-- Board / List area -->
@@ -261,24 +336,76 @@ function selectEmpProject(id) {
   filterEmpTasks();
 }
 
-// ─── Filter / route to view ───────────────────────────────────────────────────
+// ─── Filter / sort / page / route to view ────────────────────────────────────
 function filterEmpTasks() {
+  _empPage = 1;
+  _runEmpView();
+}
+
+function setEmpSort(field) {
+  if (_empSortField === field) {
+    _empSortDir = _empSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _empSortField = field;
+    _empSortDir   = 'asc';
+  }
+  _empPage = 1;
+  _runEmpView();
+}
+
+function goEmpPage(n) {
+  _empPage = n;
+  _runEmpView();
+}
+
+function _runEmpView() {
   const all = window._empTasksAll || [];
 
   let list = all.filter(t => {
     if (_empSelectedProject != null && t.workflow_id != _empSelectedProject) return false;
     if (_empViewMode === 'list') {
-      const prio  = document.getElementById('emp-filter-priority')?.value || '';
-      const stage = document.getElementById('emp-filter-stage')?.value    || '';
-      const q     = (document.getElementById('emp-search')?.value || '').toLowerCase();
-      if (prio  && t.priority !== prio)                     return false;
-      if (stage && (t.stage_name || '') !== stage)          return false;
-      if (q     && !t.title.toLowerCase().includes(q))      return false;
+      const prio    = document.getElementById('emp-filter-priority')?.value  || '';
+      const stage   = document.getElementById('emp-filter-stage')?.value     || '';
+      const q       = (document.getElementById('emp-search')?.value || '').toLowerCase();
+      const dueFrom = document.getElementById('emp-filter-due-from')?.value  || '';
+      const dueTo   = document.getElementById('emp-filter-due-to')?.value    || '';
+      if (prio    && t.priority !== prio)                return false;
+      if (stage   && (t.stage_name || '') !== stage)     return false;
+      if (q       && !t.title.toLowerCase().includes(q)) return false;
+      if (dueFrom && (!t.due_date || t.due_date < dueFrom)) return false;
+      if (dueTo   && (!t.due_date || t.due_date > dueTo))   return false;
     }
     return true;
   });
 
-  _empViewMode === 'board' ? _renderEmpBoard(list) : _renderEmpList(list);
+  if (_empViewMode === 'board') { _renderEmpBoard(list); return; }
+
+  // Sort
+  const priorityRank = { high: 0, medium: 1, low: 2 };
+  list.sort((a, b) => {
+    let av, bv;
+    if (_empSortField === 'priority') {
+      av = priorityRank[a.priority] ?? 1;
+      bv = priorityRank[b.priority] ?? 1;
+    } else if (_empSortField === 'due_date') {
+      av = a.due_date || '9999-99-99';
+      bv = b.due_date || '9999-99-99';
+    } else {
+      av = (a[_empSortField] || '').toLowerCase();
+      bv = (b[_empSortField] || '').toLowerCase();
+    }
+    if (av < bv) return _empSortDir === 'asc' ? -1 : 1;
+    if (av > bv) return _empSortDir === 'asc' ?  1 : -1;
+    return 0;
+  });
+
+  // Paginate
+  const total      = list.length;
+  const totalPages = Math.max(1, Math.ceil(total / _EMP_PAGE_SIZE));
+  if (_empPage > totalPages) _empPage = totalPages;
+  const paged = list.slice((_empPage - 1) * _EMP_PAGE_SIZE, _empPage * _EMP_PAGE_SIZE);
+
+  _renderEmpList(paged, total);
 }
 
 // ─── Board view ───────────────────────────────────────────────────────────────
@@ -383,39 +510,103 @@ function _empTaskCard(t) {
 }
 
 // ─── List view ────────────────────────────────────────────────────────────────
-function _renderEmpList(tasks) {
+function _empSortHeader(label, field) {
+  const active = _empSortField === field;
+  const icon   = active ? (_empSortDir === 'asc' ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort';
+  return `<th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider
+                      cursor-pointer select-none hover:bg-gray-100 whitespace-nowrap group"
+               onclick="setEmpSort('${field}')">
+    <span class="flex items-center gap-1.5">
+      ${label}
+      <i class="fa-solid ${icon} text-[10px] ${active ? 'text-blue-500' : 'text-gray-300 group-hover:text-gray-400'}"></i>
+    </span>
+  </th>`;
+}
+
+function _empPagination(total, current) {
+  const pages = Math.ceil(total / _EMP_PAGE_SIZE);
+  if (pages <= 1) return '';
+  const start = (current - 1) * _EMP_PAGE_SIZE + 1;
+  const end   = Math.min(current * _EMP_PAGE_SIZE, total);
+
+  const nav = (html, page, off) =>
+    `<button onclick="goEmpPage(${page})"
+             class="px-2.5 py-1.5 text-xs rounded-lg border transition-colors
+                    ${off ? 'text-gray-300 border-gray-100 cursor-not-allowed pointer-events-none'
+                          : 'text-gray-600 border-gray-200 hover:bg-gray-50'}"
+             ${off ? 'disabled' : ''}>${html}</button>`;
+
+  const nums = [];
+  for (let p = Math.max(1, current - 2); p <= Math.min(pages, current + 2); p++) nums.push(p);
+
+  return `
+    <div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50/60 rounded-b-xl">
+      <span class="text-xs text-gray-500">
+        Showing <span class="font-medium">${start}&ndash;${end}</span> of <span class="font-medium">${total}</span> tasks
+      </span>
+      <div class="flex items-center gap-1">
+        ${nav('<i class="fa-solid fa-chevron-left"></i>', current - 1, current === 1)}
+        ${nums.map(p =>
+          `<button onclick="goEmpPage(${p})"
+                   class="px-2.5 py-1.5 text-xs rounded-lg border transition-colors font-medium
+                          ${p === current
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'text-gray-600 border-gray-200 hover:bg-gray-50'}">${p}</button>`
+        ).join('')}
+        ${nav('<i class="fa-solid fa-chevron-right"></i>', current + 1, current === pages)}
+      </div>
+    </div>`;
+}
+
+function _renderEmpList(tasks, total) {
   const viewEl = document.getElementById('emp-tasks-view');
   if (!viewEl) return;
 
-  if (!tasks.length) {
+  if (total === 0) {
     viewEl.innerHTML = emptyState('fa-inbox', 'No tasks found', 'Try selecting a different project or clearing the filters');
     return;
   }
 
   viewEl.innerHTML = `
-    <div class="bg-white rounded-xl border border-gray-100 shadow-sm">
-      ${tableWrapper(
-        ['Task', 'Project', 'Stage', 'Priority', 'Due Date', 'Sub'],
-        tasks.map(t => {
-          const od = isOverdue(t.due_date) && !['Done','Closed'].includes(t.stage_name);
-          return `
-            <tr class="${od ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'} cursor-pointer transition-colors"
-                onclick="navigate('employee-task-detail',{id:${t.id}})">
-              <td class="px-4 py-3 font-medium text-sm text-gray-900">${t.title}</td>
-              <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">${t.workflow_name || '—'}</td>
-              <td class="px-4 py-3">${stageBadge(t.stage_name, t.stage_color)}</td>
-              <td class="px-4 py-3">${priorityBadge(t.priority)}</td>
-              <td class="px-4 py-3 text-sm whitespace-nowrap ${od ? 'text-red-600 font-medium' : 'text-gray-500'}">
-                ${formatDate(t.due_date)}
-              </td>
-              <td class="px-4 py-3 text-center text-sm text-gray-400">
-                ${+t.subtask_count > 0
-                  ? `<span class="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">${t.subtask_count}</span>`
-                  : '—'}
-              </td>
-            </tr>`;
-        })
-      )}
+    <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full">
+          <thead class="bg-gray-50 border-b border-gray-200">
+            <tr>
+              ${_empSortHeader('Task', 'title')}
+              ${_empSortHeader('Project', 'workflow_name')}
+              ${_empSortHeader('Stage', 'stage_name')}
+              ${_empSortHeader('Priority', 'priority')}
+              ${_empSortHeader('Due Date', 'due_date')}
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Sub</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-50">
+            ${tasks.map(t => {
+              const od = isOverdue(t.due_date) && !['Done','Closed'].includes(t.stage_name);
+              return `
+                <tr class="${od ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'} cursor-pointer transition-colors"
+                    onclick="navigate('employee-task-detail',{id:${t.id}})">
+                  <td class="px-4 py-3 font-medium text-sm text-gray-900 max-w-xs">
+                    <div class="truncate">${t.title}</div>
+                  </td>
+                  <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">${t.workflow_name || '—'}</td>
+                  <td class="px-4 py-3 whitespace-nowrap">${stageBadge(t.stage_name, t.stage_color)}</td>
+                  <td class="px-4 py-3 whitespace-nowrap">${priorityBadge(t.priority)}</td>
+                  <td class="px-4 py-3 text-sm whitespace-nowrap ${od ? 'text-red-600 font-medium' : 'text-gray-500'}">
+                    ${t.due_date ? formatDate(t.due_date) : '—'}
+                  </td>
+                  <td class="px-4 py-3 text-center">
+                    ${+t.subtask_count > 0
+                      ? `<span class="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">${t.subtask_count}</span>`
+                      : '<span class="text-gray-300 text-xs">—</span>'}
+                  </td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${_empPagination(total, _empPage)}
     </div>`;
 }
 
@@ -498,7 +689,7 @@ async function openEmpCreateTaskModal() {
   const wfOptions = workflows.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
 
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box">
         <div class="p-6 border-b border-gray-100 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-900">New Task</h3>
@@ -507,7 +698,7 @@ async function openEmpCreateTaskModal() {
           </button>
         </div>
         <form id="emp-task-form" onsubmit="submitEmpCreateTask(event)" class="p-6 space-y-4">
-          <div><label class="label">Title *</label><input name="title" class="input" required /></div>
+          <div><label class="label">Title <span class="text-red-500">*</span></label><input name="title" class="input" required /></div>
           <div><label class="label">Description</label><textarea name="description" class="input" rows="3"></textarea></div>
           <div class="grid grid-cols-2 gap-4">
             <div><label class="label">Priority</label>
@@ -517,10 +708,10 @@ async function openEmpCreateTaskModal() {
                 <option value="low">🟢 Low</option>
               </select>
             </div>
-            <div><label class="label">Due Date</label>
-              <input name="due_date" type="date" class="input" />
+            <div><label class="label">Due Date <span class="text-red-500">*</span></label>
+              <input name="due_date" type="date" class="input" required />
             </div>
-            <div><label class="label">Project *</label>
+            <div><label class="label">Project <span class="text-red-500">*</span></label>
               <select name="workflow_id" class="input" id="emp-workflow-sel"
                       onchange="empLoadStages(this.value)" required>
                 <option value="">Select a project</option>${wfOptions}
@@ -571,6 +762,8 @@ function empLoadStages(wfId) {
 async function submitEmpCreateTask(e) {
   e.preventDefault();
   const data  = Object.fromEntries(new FormData(e.target).entries());
+  if (!data.stage_id)    delete data.stage_id;
+  if (!data.assignee_id) delete data.assignee_id;
   const errEl = document.getElementById('emp-task-error');
   errEl.classList.add('hidden');
   const fileInput = document.getElementById('modal-attach-files');

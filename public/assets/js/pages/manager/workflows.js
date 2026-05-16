@@ -1,7 +1,7 @@
 async function renderManagerWorkflows() {
   document.getElementById('app').innerHTML = renderLayout('manager', `
     <div class="p-6">
-      ${pageHeader('Workflows', 'Define your task stages', `<button class="btn-primary" onclick="openCreateWorkflowModal()"><i class="fa-solid fa-plus"></i> New Workflow</button>`)}
+      ${pageHeader('Projects', 'Manage your company projects and team members', `<button class="btn-primary" onclick="openCreateWorkflowModal()"><i class="fa-solid fa-plus"></i> New Project</button>`)}
       <div id="workflows-container">Loading...</div>
     </div>`);
   await loadWorkflows();
@@ -18,33 +18,89 @@ async function loadWorkflows() {
 
 function renderWorkflows() {
   const el = document.getElementById('workflows-container');
-  if (!_workflows.length) { el.innerHTML = emptyState('fa-diagram-project', 'No workflows yet', 'Create a workflow to organize tasks'); return; }
-  el.innerHTML = `<div class="space-y-4">${_workflows.map(wf => `
-    <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 ${!wf.is_active ? 'opacity-60' : ''}">
-      <div class="flex items-center justify-between mb-4">
-        <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600"><i class="fa-solid fa-diagram-project"></i></div>
-          <div>
-            <div class="font-semibold text-gray-900">${wf.name}</div>
-            <div class="text-xs text-gray-400">${wf.stages.length} stages · ${statusDot(wf.is_active)}</div>
+  if (!_workflows.length) { el.innerHTML = emptyState('fa-diagram-project', 'No projects yet', 'Create a project to start organizing tasks'); return; }
+  el.innerHTML = `<div class="grid grid-cols-1 lg:grid-cols-2 gap-5">${_workflows.map(wf => wfCard(wf)).join('')}</div>`;
+}
+
+function wfCard(wf) {
+  const members  = wf.members || [];
+  const stages   = wf.stages  || [];
+  const accent   = stages[0]?.color || '#6366f1';
+  const accentEnd= stages[stages.length - 1]?.color || accent;
+
+  const memberAvatars = members.slice(0, 5).map((m, i) => `
+    <div class="w-8 h-8 rounded-full flex items-center justify-center text-white text-[11px] font-bold border-2 border-white shrink-0"
+         style="background:linear-gradient(135deg,#6366f1,#3b82f6);${i > 0 ? 'margin-left:-10px' : ''}"
+         title="${escHtml(m.name)}">${avatarInitials(m.name)}</div>`).join('');
+  const extraCount = members.length > 5
+    ? `<div class="w-8 h-8 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center text-[10px] font-bold border-2 border-white shrink-0" style="margin-left:-10px">+${members.length - 5}</div>`
+    : '';
+
+  return `
+    <div class="bg-white rounded-2xl overflow-hidden transition-shadow hover:shadow-lg ${!wf.is_active ? 'opacity-60' : ''}"
+         style="box-shadow:0 2px 8px rgba(0,0,0,0.06);border:1px solid rgba(226,232,240,0.8)">
+
+      <!-- Gradient accent bar -->
+      <div class="h-1.5" style="background:linear-gradient(90deg,${accent},${accentEnd})"></div>
+
+      <div class="p-5">
+        <!-- Header -->
+        <div class="flex items-start justify-between mb-4">
+          <div class="flex items-center gap-3">
+            <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
+                 style="background:${accent}18;color:${accent}">
+              <i class="fa-solid fa-diagram-project text-lg"></i>
+            </div>
+            <div>
+              <div class="font-bold text-gray-900 text-base leading-snug">${escHtml(wf.name)}</div>
+              <div class="flex items-center gap-2 mt-0.5">
+                ${statusDot(wf.is_active)}
+                <span class="text-xs text-gray-400">${stages.length} stage${stages.length !== 1 ? 's' : ''} · ${members.length} member${members.length !== 1 ? 's' : ''}</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button class="btn-secondary text-xs" onclick="openEditWorkflowModal(${wf.id})">
+              <i class="fa-solid fa-pen"></i> Edit
+            </button>
+            <button class="btn-danger text-xs" onclick="deleteWorkflow(${wf.id})">
+              <i class="fa-solid fa-trash"></i>
+            </button>
           </div>
         </div>
-        <div class="flex items-center gap-2">
-          <button class="btn-secondary text-xs" onclick="openEditWorkflowModal(${wf.id})"><i class="fa-solid fa-pen"></i> Edit</button>
-          <button class="btn-danger text-xs" onclick="deleteWorkflow(${wf.id})"><i class="fa-solid fa-trash"></i></button>
+
+        <!-- Stage pipeline -->
+        <div class="flex flex-wrap gap-1.5 mb-4 p-3 rounded-xl" style="background:#f8fafc">
+          ${stages.length ? stages.map((s, i) => `
+            <div class="flex items-center gap-1">
+              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold text-white shadow-sm"
+                    style="background:${s.color}">
+                <span class="w-3.5 h-3.5 rounded-full bg-white/25 flex items-center justify-center text-[9px] font-bold">${i + 1}</span>
+                ${escHtml(s.name)}
+              </span>
+              ${i < stages.length - 1 ? '<i class="fa-solid fa-chevron-right text-gray-300 text-[9px]"></i>' : ''}
+            </div>`).join('')
+          : '<span class="text-xs text-gray-400 italic">No stages defined</span>'}
+        </div>
+
+        <!-- Footer: members + action -->
+        <div class="flex items-center justify-between pt-3" style="border-top:1px solid #f1f5f9">
+          <div class="flex items-center gap-2">
+            ${members.length
+              ? `<div class="flex items-center">${memberAvatars}${extraCount}</div>
+                 <span class="text-xs text-gray-500 ml-1">${members.length} member${members.length !== 1 ? 's' : ''}</span>`
+              : '<span class="text-xs text-gray-400 italic">No members yet</span>'}
+          </div>
+          <button class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors"
+                  style="background:#eef2ff;color:#6366f1"
+                  onmouseover="this.style.background='#e0e7ff'"
+                  onmouseout="this.style.background='#eef2ff'"
+                  onclick="openMembersModal(${wf.id})">
+            <i class="fa-solid fa-user-plus"></i> Manage Members
+          </button>
         </div>
       </div>
-      <div class="flex flex-wrap gap-2">
-        ${wf.stages.map((s, i) => `
-          <div class="flex items-center gap-1.5">
-            <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-white" style="background-color:${s.color}">
-              <span class="w-4 h-4 rounded-full bg-white bg-opacity-30 flex items-center justify-center text-[10px] font-bold">${i + 1}</span>
-              ${s.name}
-            </div>
-            ${i < wf.stages.length - 1 ? '<i class="fa-solid fa-arrow-right text-gray-300 text-xs"></i>' : ''}
-          </div>`).join('')}
-      </div>
-    </div>`).join('')}</div>`;
+    </div>`;
 }
 
 const DEFAULT_STAGES = [
@@ -102,14 +158,14 @@ function collectStages() {
 
 function openCreateWorkflowModal() {
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box">
         <div class="p-6 border-b border-gray-100 flex items-center justify-between">
-          <h3 class="text-lg font-semibold text-gray-900">New Workflow</h3>
+          <h3 class="text-lg font-semibold text-gray-900">New Project</h3>
           <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <form id="wf-form" onsubmit="submitCreateWorkflow(event)" class="p-6 space-y-4">
-          <div><label class="label">Workflow Name *</label><input name="wf_name" class="input" placeholder="e.g. Software Development" required /></div>
+          <div><label class="label">Project Name <span class="text-red-500">*</span></label><input name="wf_name" class="input" placeholder="e.g. Software Development" required /></div>
           <div>
             <label class="label">Stages</label>
             <div class="text-xs text-gray-400 mb-2">Define the stages tasks will move through</div>
@@ -118,7 +174,7 @@ function openCreateWorkflowModal() {
           <div id="wf-error" class="hidden p-3 bg-red-50 text-red-600 text-sm rounded-lg"></div>
           <div class="flex justify-end gap-3">
             <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
-            <button type="submit" class="btn-primary">Create Workflow</button>
+            <button type="submit" class="btn-primary">Create Project</button>
           </div>
         </form>
       </div>
@@ -134,7 +190,7 @@ async function submitCreateWorkflow(e) {
   errEl.classList.add('hidden');
   try {
     await api.manager.createWorkflow({ name, stages });
-    showToast('Workflow created!');
+    showToast('Project created!');
     closeModal();
     await loadWorkflows();
   } catch (err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
@@ -144,14 +200,14 @@ function openEditWorkflowModal(id) {
   const wf = _workflows.find(x => x.id == id);
   if (!wf) return;
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box">
         <div class="p-6 border-b border-gray-100 flex items-center justify-between">
-          <h3 class="text-lg font-semibold text-gray-900">Edit Workflow</h3>
+          <h3 class="text-lg font-semibold text-gray-900">Edit Project</h3>
           <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <form id="edit-wf-form" onsubmit="submitEditWorkflow(event,${id})" class="p-6 space-y-4">
-          <div><label class="label">Workflow Name *</label><input name="wf_name" class="input" value="${wf.name}" required /></div>
+          <div><label class="label">Project Name <span class="text-red-500">*</span></label><input name="wf_name" class="input" value="${wf.name}" required /></div>
           <div>
             <label class="label">Stages</label>
             ${stagesEditor(wf.stages)}
@@ -182,7 +238,7 @@ async function submitEditWorkflow(e, id) {
   if (!stages.length) { errEl.textContent = 'Add at least one stage'; errEl.classList.remove('hidden'); return; }
   try {
     await api.manager.updateWorkflow(id, { name, is_active: isActive, stages });
-    showToast('Workflow updated!');
+    showToast('Project updated!');
     closeModal();
     await loadWorkflows();
   } catch (err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
@@ -190,10 +246,180 @@ async function submitEditWorkflow(e, id) {
 
 async function deleteWorkflow(id) {
   const wf = _workflows.find(x => x.id == id);
-  if (!confirmDialog(`Delete workflow "${wf?.name}"? This cannot be undone.`)) return;
+  if (!confirmDialog(`Delete project "${wf?.name}"? This cannot be undone.`)) return;
   try {
     await api.manager.deleteWorkflow(id);
-    showToast('Workflow deleted!');
+    showToast('Project deleted!');
     await loadWorkflows();
   } catch (err) { showToast(err.message, 'error'); }
+}
+
+// ── Member management ─────────────────────────────────────────────────────────
+
+function escHtml(str) {
+  if (str == null) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function openMembersModal(wfId) {
+  const wf = _workflows.find(w => w.id == wfId);
+  if (!wf) return;
+
+  let allUsers = [], members = [];
+  try {
+    [allUsers, members] = await Promise.all([
+      api.manager.listUsers(),
+      api.manager.listProjectMembers(wfId),
+    ]);
+  } catch (err) { showToast(err.message, 'error'); return; }
+
+  if (!allUsers.length) {
+    showToast('No employees in this company yet. Add employees first.', 'info');
+    return;
+  }
+
+  const memberIds = new Set(members.map(m => m.id));
+
+  const rows = allUsers.map(u => {
+    const checked = memberIds.has(u.id);
+    return `
+      <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors hover:bg-gray-50
+                    ${checked ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-transparent'}"
+             id="member-label-${u.id}">
+        <input type="checkbox" class="member-cb w-4 h-4 rounded accent-blue-600 shrink-0"
+               value="${u.id}" ${checked ? 'checked' : ''}
+               onchange="toggleMemberLabel(this)" />
+        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500
+                    flex items-center justify-center text-white text-xs font-bold shrink-0">
+          ${avatarInitials(u.name)}
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium text-gray-800">${escHtml(u.name)}</div>
+          <div class="text-xs text-gray-400 truncate">${escHtml(u.email)}</div>
+        </div>
+        ${checked ? '<i class="fa-solid fa-circle-check text-blue-500 text-sm shrink-0"></i>' : '<i class="fa-solid fa-circle text-gray-200 text-sm shrink-0"></i>'}
+      </label>`;
+  }).join('');
+
+  openModal(`
+    <div class="modal-overlay">
+      <div class="modal-box max-w-lg">
+        <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-semibold text-gray-900">Manage Members</h3>
+            <p class="text-xs text-gray-400 mt-0.5">${escHtml(wf.name)} · ${members.length} of ${allUsers.length} selected</p>
+          </div>
+          <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+
+        <!-- Search -->
+        <div class="px-6 pt-4">
+          <div class="relative">
+            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+            <input id="member-search" type="text" class="input pl-9 text-sm" placeholder="Search employees…"
+                   oninput="filterMemberList(this.value)" />
+          </div>
+        </div>
+
+        <!-- Quick actions -->
+        <div class="px-6 pt-3 flex gap-2">
+          <button onclick="selectAllMembers(true)"  class="text-xs text-blue-600 hover:underline">Select all</button>
+          <span class="text-gray-300">·</span>
+          <button onclick="selectAllMembers(false)" class="text-xs text-blue-600 hover:underline">Deselect all</button>
+        </div>
+
+        <!-- Employee checklist -->
+        <div id="member-checklist" class="px-6 py-4 space-y-2 max-h-72 overflow-y-auto">
+          ${rows}
+        </div>
+
+        <div id="member-save-err" class="hidden mx-6 mb-2 p-3 bg-red-50 text-red-600 text-sm rounded-lg"></div>
+
+        <div class="p-6 border-t border-gray-100 flex items-center justify-between gap-3">
+          <span class="text-xs text-gray-400" id="member-sel-count">${members.length} member${members.length !== 1 ? 's' : ''} selected</span>
+          <div class="flex gap-2">
+            <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+            <button class="btn-primary" onclick="saveMemberChanges(${wfId})">
+              <i class="fa-solid fa-floppy-disk"></i> Save Changes
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`);
+}
+
+function toggleMemberLabel(cb) {
+  const label = document.getElementById(`member-label-${cb.value}`);
+  if (!label) return;
+  const icon = label.querySelector('i.fa-solid');
+  if (cb.checked) {
+    label.className = label.className.replace('bg-gray-50 border-transparent', 'bg-blue-50 border-blue-200');
+    if (icon) { icon.className = 'fa-solid fa-circle-check text-blue-500 text-sm shrink-0'; }
+  } else {
+    label.className = label.className.replace('bg-blue-50 border-blue-200', 'bg-gray-50 border-transparent');
+    if (icon) { icon.className = 'fa-solid fa-circle text-gray-200 text-sm shrink-0'; }
+  }
+  const total = document.querySelectorAll('.member-cb:checked').length;
+  const cntEl = document.getElementById('member-sel-count');
+  if (cntEl) cntEl.textContent = `${total} member${total !== 1 ? 's' : ''} selected`;
+}
+
+function selectAllMembers(checked) {
+  document.querySelectorAll('.member-cb').forEach(cb => {
+    cb.checked = checked;
+    toggleMemberLabel(cb);
+  });
+}
+
+function filterMemberList(q) {
+  const term = q.toLowerCase();
+  document.querySelectorAll('#member-checklist label').forEach(label => {
+    const text = label.textContent.toLowerCase();
+    label.style.display = text.includes(term) ? '' : 'none';
+  });
+}
+
+async function saveMemberChanges(wfId) {
+  const wf = _workflows.find(w => w.id == wfId);
+  if (!wf) return;
+
+  const errEl = document.getElementById('member-save-err');
+  errEl.classList.add('hidden');
+
+  const currentMemberIds = new Set((wf.members || []).map(m => m.id));
+  const selectedIds = new Set(
+    Array.from(document.querySelectorAll('.member-cb:checked')).map(cb => +cb.value)
+  );
+
+  const toAdd    = [...selectedIds].filter(id => !currentMemberIds.has(id));
+  const toRemove = [...currentMemberIds].filter(id => !selectedIds.has(id));
+
+  if (!toAdd.length && !toRemove.length) { closeModal(); return; }
+
+  const btn = document.querySelector('[onclick="saveMemberChanges(' + wfId + ')"]');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving…'; }
+
+  try {
+    await Promise.all([
+      ...toAdd.map(id => api.manager.addProjectMember(wfId, id)),
+      ...toRemove.map(id => api.manager.removeProjectMember(wfId, id)),
+    ]);
+
+    // Refresh local members cache
+    const fresh = await api.manager.listProjectMembers(wfId);
+    if (wf) wf.members = fresh;
+    renderWorkflows();
+
+    const added   = toAdd.length;
+    const removed = toRemove.length;
+    const parts   = [];
+    if (added)   parts.push(`${added} added`);
+    if (removed) parts.push(`${removed} removed`);
+    showToast('Members updated — ' + parts.join(', '));
+    closeModal();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Save Changes'; }
+  }
 }

@@ -48,6 +48,7 @@ async function loadTaskDetail(taskId) {
     }
 
     renderTaskDetail();
+    loadAndRenderActivityLog(taskId);
   } catch (err) {
     document.getElementById('task-detail-content').innerHTML =
       `<div class="text-center py-12 text-red-500">${err.message}</div>`;
@@ -205,6 +206,16 @@ function renderTaskDetail() {
             </div>
           </div>
         </div>
+
+        <!-- Activity Log -->
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+          <h3 class="font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-clock-rotate-left text-gray-400"></i> Activity
+          </h3>
+          <div id="activity-log-list">
+            <div class="text-sm text-gray-400 text-center py-4">Loading…</div>
+          </div>
+        </div>
       </div>
 
       <!-- ── Sidebar ────────────────────────────────────────────── -->
@@ -230,6 +241,17 @@ function renderTaskDetail() {
             ${detailRow('Workflow', `<span class="text-gray-700">${escHtml(task.workflow_name || '—')}</span>`)}
             ${detailRow('Created', `<span class="text-gray-500">${formatDate(task.created_at)}</span>`)}
             ${detailRow('Creator', `<span class="text-gray-700">${escHtml(task.creator_name || '—')}</span>`)}
+
+            <!-- Tags -->
+            <div class="pt-2">
+              <div class="text-xs text-gray-400 uppercase tracking-wider mb-2">Tags</div>
+              <div class="flex flex-wrap gap-1.5 mb-2" id="task-tags-display">
+                ${(task.tags || []).map(t => tagBadge(t)).join('') || '<span class="text-xs text-gray-400">No tags</span>'}
+              </div>
+              <button onclick="openTagManager(${task.id})" class="text-xs text-blue-600 hover:underline flex items-center gap-1">
+                <i class="fa-solid fa-tag"></i> Manage tags
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -318,7 +340,7 @@ function openEditTaskModal() {
   ).join('');
 
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box">
         <div class="p-6 border-b border-gray-100 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-900">Edit Task</h3>
@@ -413,7 +435,7 @@ function openCreateSubtaskModal(parentId) {
   const userOptions = _currentUsers.map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('');
 
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box">
         <div class="p-6 border-b border-gray-100 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-900">Add Subtask</h3>
@@ -549,4 +571,111 @@ async function deleteMgrAttachment(taskId, attachId, btn) {
   } catch (err) {
     showToast(err.message, 'error');
   }
+}
+
+// ── Activity Log ──────────────────────────────────────────────────────────────
+
+async function loadAndRenderActivityLog(taskId) {
+  try {
+    const log = await api.manager.getActivityLog(taskId);
+    const el = document.getElementById('activity-log-list');
+    if (!el) return;
+    if (!log.length) { el.innerHTML = '<p class="text-sm text-gray-400 text-center py-2">No activity yet</p>'; return; }
+    el.innerHTML = log.map(entry => `
+      <div class="flex gap-3 py-2.5 border-b border-gray-50 last:border-0 animate-fade-in-up">
+        <div class="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 shrink-0 text-xs font-bold">
+          ${avatarInitials(entry.user_name)}
+        </div>
+        <div class="flex-1 min-w-0">
+          <span class="text-sm font-medium text-gray-700">${escHtml(entry.user_name)}</span>
+          <span class="text-sm text-gray-500"> — ${escHtml(entry.action)}</span>
+          ${entry.detail ? `<div class="text-xs text-gray-400 truncate mt-0.5">${escHtml(entry.detail)}</div>` : ''}
+          <div class="text-xs text-gray-400 mt-0.5">${formatDateTime(entry.created_at)}</div>
+        </div>
+      </div>`).join('');
+  } catch {}
+}
+
+// ── Tag Manager ───────────────────────────────────────────────────────────────
+
+async function openTagManager(taskId) {
+  let allTags = [], taskTags = [];
+  try {
+    [allTags, { tags: taskTags }] = await Promise.all([
+      api.manager.listTags(),
+      api.manager.getTask(taskId).then(t => ({ tags: t.tags || [] })),
+    ]);
+  } catch(err) { showToast(err.message, 'error'); return; }
+
+  const taskTagIds = new Set(taskTags.map(t => t.id));
+
+  openModal(`
+    <div class="modal-overlay">
+      <div class="modal-box max-w-sm">
+        <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+          <h3 class="font-semibold text-gray-900">Manage Tags</h3>
+          <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="p-5 space-y-3">
+          <div class="flex flex-wrap gap-2 min-h-8" id="tag-current">
+            ${taskTags.map(t => `
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium"
+                    style="background:${t.color}22;color:${t.color};border:1px solid ${t.color}44">
+                ${escHtml(t.name)}
+                <button onclick="detachTag(${taskId}, ${t.id})" class="ml-0.5 opacity-70 hover:opacity-100">
+                  <i class="fa-solid fa-xmark text-[10px]"></i>
+                </button>
+              </span>`).join('') || '<span class="text-xs text-gray-400">No tags on this task</span>'}
+          </div>
+          <hr/>
+          <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Available Tags</p>
+          <div class="flex flex-wrap gap-2">
+            ${allTags.filter(t => !taskTagIds.has(t.id)).map(t => `
+              <button onclick="attachTag(${taskId}, ${t.id})"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium hover:opacity-80 transition-opacity"
+                      style="background:${t.color}22;color:${t.color};border:1px solid ${t.color}44">
+                <i class="fa-solid fa-plus text-[10px]"></i> ${escHtml(t.name)}
+              </button>`).join('') || '<span class="text-xs text-gray-400">All tags applied</span>'}
+          </div>
+          <hr/>
+          <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Create New Tag</p>
+          <div class="flex items-center gap-2">
+            <input id="new-tag-name" type="text" class="input flex-1 text-sm" placeholder="Tag name…" />
+            <input id="new-tag-color" type="color" class="w-9 h-9 rounded cursor-pointer border border-gray-300" value="#6366f1" />
+            <button onclick="createAndAttachTag(${taskId})" class="btn-primary text-xs shrink-0">Add</button>
+          </div>
+        </div>
+      </div>
+    </div>`);
+}
+
+async function attachTag(taskId, tagId) {
+  try {
+    await api.manager.addTagToTask(taskId, tagId);
+    showToast('Tag added');
+    closeModal();
+    await loadTaskDetail(taskId);
+  } catch(err) { showToast(err.message, 'error'); }
+}
+
+async function detachTag(taskId, tagId) {
+  try {
+    await api.manager.removeTagFromTask(taskId, tagId);
+    showToast('Tag removed');
+    closeModal();
+    await loadTaskDetail(taskId);
+  } catch(err) { showToast(err.message, 'error'); }
+}
+
+async function createAndAttachTag(taskId) {
+  const name  = document.getElementById('new-tag-name')?.value.trim();
+  const color = document.getElementById('new-tag-color')?.value || '#6366f1';
+  if (!name) { showToast('Enter a tag name', 'error'); return; }
+  try {
+    const tag = await api.manager.createTag({ name, color });
+    await api.manager.addTagToTask(taskId, tag.id);
+    showToast('Tag created & added');
+    closeModal();
+    await loadTaskDetail(taskId);
+  } catch(err) { showToast(err.message, 'error'); }
 }

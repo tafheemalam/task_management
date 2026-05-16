@@ -184,7 +184,7 @@ async function approveSubRequest(id) {
   const r = _subRequests.find(x => x.id == id);
   if (!r) return;
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box max-w-md">
         <div class="p-6 text-center">
           <div class="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
@@ -223,7 +223,7 @@ function openRejectModal(id) {
   const r = _subRequests.find(x => x.id == id);
   if (!r) return;
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box max-w-md">
         <div class="p-6 border-b border-gray-100 flex items-center justify-between">
           <div>
@@ -289,7 +289,7 @@ function openSubRequestDetail(id) {
     : '';
 
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box max-w-lg">
         <div class="p-5 border-b border-gray-100 flex items-center justify-between">
           <div class="flex items-center gap-3">

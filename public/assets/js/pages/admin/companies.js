@@ -66,7 +66,7 @@ async function toggleCompanyStatus(id, current) {
 function openCreateCompanyModal() {
   const pkgOptions = _packages.filter(p => p.is_active).map(p => `<option value="${p.id}">${p.name} ($${p.price}/${p.type})</option>`).join('');
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box">
         <div class="p-6 border-b border-gray-100 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-900">Register New Company</h3>
@@ -124,7 +124,7 @@ function openEditCompanyModal(id) {
   if (!c) return;
   const pkgOptions = _packages.filter(p => p.is_active).map(p => `<option value="${p.id}" ${c.package_id == p.id ? 'selected' : ''}>${p.name} ($${p.price}/${p.type})</option>`).join('');
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box">
         <div class="p-6 border-b border-gray-100 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-900">Edit Company: ${c.name}</h3>

@@ -19,11 +19,14 @@ const routes = {
   'manager-workflows': () => renderManagerWorkflows(),
   'manager-tasks': () => renderManagerTasks(),
   'manager-task-detail': (p) => renderManagerTaskDetail(p),
+  'manager-gantt':    () => renderManagerGantt(),
+  'manager-calendar': () => renderCalendar('manager'),
 
   // Employee
   'employee-dashboard': () => renderEmployeeDashboard(),
   'employee-tasks': (p) => renderEmployeeTasks(p),
   'employee-task-detail': (p) => renderEmployeeTaskDetail(p),
+  'employee-calendar': () => renderCalendar('employee'),
 };
 
 function roleHome(role) {

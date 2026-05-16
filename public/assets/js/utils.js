@@ -81,60 +81,99 @@ function renderSidebar(role) {
   const managerItems = [
     { icon: 'fa-gauge-high', label: 'Dashboard', page: 'manager-dashboard' },
     { icon: 'fa-users', label: 'Team Members', page: 'manager-users' },
-    { icon: 'fa-diagram-project', label: 'Workflows', page: 'manager-workflows' },
+    { icon: 'fa-diagram-project', label: 'Projects', page: 'manager-workflows' },
     { icon: 'fa-list-check', label: 'Tasks', page: 'manager-tasks' },
+    { icon: 'fa-calendar-days', label: 'Calendar', page: 'manager-calendar' },
   ];
   const employeeItems = [
     { icon: 'fa-gauge-high', label: 'My Dashboard', page: 'employee-dashboard' },
     { icon: 'fa-list-check', label: 'My Tasks', page: 'employee-tasks' },
+    { icon: 'fa-calendar-days', label: 'Calendar', page: 'employee-calendar' },
   ];
   const items = role === 'admin' ? adminItems : role === 'manager' ? managerItems : employeeItems;
   const roleLabel = role === 'admin' ? 'Administrator' : role === 'manager' ? 'Manager' : 'Employee';
-  const roleColor = role === 'admin' ? 'bg-purple-100 text-purple-700' : role === 'manager' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700';
+  const rolePill  = role === 'admin'
+    ? 'background:rgba(168,85,247,0.25);color:#e9d5ff'
+    : role === 'manager'
+    ? 'background:rgba(59,130,246,0.25);color:#bfdbfe'
+    : 'background:rgba(34,197,94,0.25);color:#bbf7d0';
 
   return `
-    <aside class="fixed inset-y-0 left-0 w-60 bg-white border-r border-gray-200 flex flex-col z-30">
-      <div class="p-5 border-b border-gray-100">
+    <aside class="fixed inset-y-0 left-0 w-60 flex flex-col z-30"
+           style="background:linear-gradient(180deg,#0f172a 0%,#1e293b 100%)">
+
+      <!-- Brand -->
+      <div class="px-5 py-4" style="border-bottom:1px solid rgba(255,255,255,0.08)">
         <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center">
+          <div class="w-9 h-9 rounded-xl flex items-center justify-center"
+               style="background:linear-gradient(135deg,#6366f1,#3b82f6)">
             <i class="fa-solid fa-layer-group text-white text-sm"></i>
           </div>
           <div>
-            <div class="text-sm font-bold text-gray-900">TaskFlow</div>
-            <div class="text-xs text-gray-400">Project Management</div>
+            <div class="text-sm font-bold text-white tracking-wide">TaskFlow</div>
+            <div class="text-[11px]" style="color:rgba(255,255,255,0.4)">Project Management</div>
           </div>
         </div>
       </div>
+
+      <!-- Nav -->
       <nav class="flex-1 p-3 space-y-0.5 overflow-y-auto">
         ${items.map(item => `
-          <div class="sidebar-item ${state.currentPage === item.page ? 'sidebar-active' : 'sidebar-inactive'}" onclick="navigate('${item.page}')">
-            <i class="fa-solid ${item.icon} w-4 text-center"></i>
+          <div class="sidebar-item ${state.currentPage === item.page ? 'sidebar-active' : 'sidebar-inactive'}"
+               onclick="navigate('${item.page}')">
+            <i class="fa-solid ${item.icon} w-4 text-center opacity-80"></i>
             <span>${item.label}</span>
           </div>
         `).join('')}
       </nav>
-      <div class="p-4 border-t border-gray-100">
-        <div class="flex items-center gap-3 mb-3">
-          <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold">${avatarInitials(state.user?.name)}</div>
+
+      <!-- Footer -->
+      <div class="p-4" style="border-top:1px solid rgba(255,255,255,0.08)">
+        <!-- User row -->
+        <div class="flex items-center gap-3 mb-2 px-2 py-2 rounded-xl" style="background:rgba(255,255,255,0.06)">
+          <div class="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
+               style="background:linear-gradient(135deg,#6366f1,#3b82f6)">
+            ${avatarInitials(state.user?.name)}
+          </div>
           <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium text-gray-900 truncate">${state.user?.name || ''}</div>
-            <div class="mt-0.5"><span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${roleColor}">${roleLabel}</span></div>
+            <div class="text-sm font-medium text-white truncate">${state.user?.name || ''}</div>
+            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium mt-0.5"
+                  style="${rolePill}">${roleLabel}</span>
           </div>
         </div>
-        <button onclick="logout()" class="w-full text-left flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-          <i class="fa-solid fa-right-from-bracket"></i> Sign Out
+
+        <!-- Notifications -->
+        ${role !== 'admin' ? `
+        <div class="sidebar-item sidebar-inactive mb-0.5" onclick="openNotificationsPanel()">
+          <div class="relative w-4 text-center">
+            <i class="fa-solid fa-bell opacity-80"></i>
+            <span id="notif-badge" class="hidden absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center"></span>
+          </div>
+          <span>Notifications</span>
+        </div>` : ''}
+
+        <!-- Sign out -->
+        <button onclick="logout()"
+                class="w-full text-left flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm transition-colors"
+                style="color:rgba(248,113,113,0.85)"
+                onmouseover="this.style.background='rgba(239,68,68,0.12)'"
+                onmouseout="this.style.background='transparent'">
+          <i class="fa-solid fa-right-from-bracket w-4 text-center"></i>
+          <span>Sign Out</span>
         </button>
       </div>
     </aside>`;
 }
 
 function renderLayout(role, content) {
-  return `
+  const html = `
     ${renderSidebar(role)}
     <div class="ml-60 min-h-screen">
       <div id="modal-root" class="hidden"></div>
       ${content}
     </div>`;
+  setTimeout(() => refreshNotifBadge(), 100);
+  return html;
 }
 
 function pageHeader(title, subtitle = '', actions = '') {
@@ -157,7 +196,7 @@ function statCard(icon, value, label, color = 'blue', sub = '') {
     red: 'bg-red-50 text-red-600',
   };
   return `
-    <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+    <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 animate-fade-in-up">
       <div class="flex items-center gap-4">
         <div class="w-12 h-12 rounded-xl ${colors[color] || colors.blue} flex items-center justify-center text-xl">
           <i class="fa-solid ${icon}"></i>
@@ -236,4 +275,120 @@ function tableWrapper(headers, rows) {
         </tbody>
       </table>
     </div>`;
+}
+
+function tagBadge(tag) {
+  return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                style="background:${tag.color}22;color:${tag.color};border:1px solid ${tag.color}44">
+    ${tag.name}
+  </span>`;
+}
+
+function exportTasksToCSV(tasks, filename = 'tasks.csv') {
+  const headers = ['Title', 'Project', 'Stage', 'Priority', 'Assignee', 'Due Date', 'Created'];
+  const rows = tasks.map(t => [
+    `"${(t.title || '').replace(/"/g, '""')}"`,
+    `"${(t.workflow_name || '').replace(/"/g, '""')}"`,
+    t.stage_name || '',
+    t.priority || '',
+    `"${(t.assignee_name || '').replace(/"/g, '""')}"`,
+    t.due_date || '',
+    t.created_at ? t.created_at.split('T')[0] : '',
+  ].join(','));
+  const csv = [headers.join(','), ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+  showToast('CSV exported!');
+}
+
+async function openNotificationsPanel() {
+  const isManager = state.user?.role === 'manager';
+  let data;
+  try {
+    data = isManager ? await api.manager.listNotifications() : await api.employee.listNotifications();
+  } catch (err) { showToast(err.message || 'Could not load notifications', 'error'); return; }
+
+  const { notifications = [], unread_count = 0 } = data;
+
+  openModal(`
+    <div class="modal-overlay">
+      <div class="modal-box max-w-md">
+        <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i class="fa-solid fa-bell text-blue-500"></i>
+            <h3 class="font-semibold text-gray-900">Notifications</h3>
+            ${unread_count > 0 ? `<span class="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full font-semibold">${unread_count} new</span>` : ''}
+          </div>
+          <div class="flex items-center gap-2">
+            ${unread_count > 0 ? `<button onclick="markAllNotifsRead()" class="text-xs text-blue-600 hover:underline">Mark all read</button>` : ''}
+            <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+        </div>
+        <div class="max-h-96 overflow-y-auto divide-y divide-gray-50">
+          ${notifications.length ? notifications.map(n => `
+            <div class="flex items-start gap-3 px-5 py-3.5 cursor-pointer hover:bg-gray-50 transition-colors
+                        ${n.is_read ? '' : 'bg-blue-50/50'}"
+                 onclick="clickNotif(${n.id}, ${n.task_id || 'null'})">
+              <div class="w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5
+                          ${n.type === 'task_assigned' ? 'bg-blue-100 text-blue-600' : 'bg-purple-100 text-purple-600'}">
+                <i class="fa-solid ${n.type === 'task_assigned' ? 'fa-user-check' : 'fa-comment'} text-xs"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm text-gray-800">${n.message}</div>
+                <div class="text-xs text-gray-400 mt-0.5">${formatDateTime(n.created_at)}</div>
+              </div>
+              ${!n.is_read ? '<div class="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-2"></div>' : ''}
+            </div>`).join('')
+          : `<div class="py-12 text-center text-sm text-gray-400">
+               <i class="fa-solid fa-bell-slash text-2xl text-gray-200 block mb-3"></i>
+               No notifications yet
+             </div>`}
+        </div>
+      </div>
+    </div>`);
+}
+
+async function clickNotif(id, taskId) {
+  const isManager = state.user?.role === 'manager';
+  try {
+    if (isManager) await api.manager.markNotificationRead(id);
+    else await api.employee.markNotificationRead(id);
+  } catch {}
+  closeModal();
+  if (taskId) {
+    navigate(isManager ? 'manager-task-detail' : 'employee-task-detail', { id: taskId });
+  }
+  refreshNotifBadge();
+}
+
+async function markAllNotifsRead() {
+  const isManager = state.user?.role === 'manager';
+  try {
+    if (isManager) await api.manager.markAllNotificationsRead();
+    else await api.employee.markAllNotificationsRead();
+    closeModal();
+    refreshNotifBadge();
+    showToast('All notifications marked as read');
+  } catch(e) { showToast(e.message, 'error'); }
+}
+
+async function refreshNotifBadge() {
+  if (!state.user) return;
+  if (state.user.role === 'admin') return;
+  try {
+    const isManager = state.user.role === 'manager';
+    const data = isManager ? await api.manager.listNotifications() : await api.employee.listNotifications();
+    const badge = document.getElementById('notif-badge');
+    if (!badge) return;
+    const count = data.unread_count || 0;
+    if (count > 0) {
+      badge.textContent = count > 9 ? '9+' : count;
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  } catch {}
 }

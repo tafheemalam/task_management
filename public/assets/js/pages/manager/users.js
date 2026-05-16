@@ -72,9 +72,9 @@ async function toggleUserStatus(id, current) {
 
 function userFormFields(u = {}) {
   return `
-    <div><label class="label">Full Name *</label><input name="name" class="input" value="${u.name || ''}" required /></div>
-    <div><label class="label">Email *</label><input name="email" type="email" class="input" value="${u.email || ''}" required /></div>
-    <div><label class="label">Password ${u.id ? '(leave blank to keep current)' : '*'}</label><input name="password" type="password" class="input" ${!u.id ? 'required minlength="6"' : ''} /></div>
+    <div><label class="label">Full Name <span class="text-red-500">*</span></label><input name="name" class="input" value="${u.name || ''}" required /></div>
+    <div><label class="label">Email <span class="text-red-500">*</span></label><input name="email" type="email" class="input" value="${u.email || ''}" required /></div>
+    <div><label class="label">Password ${u.id ? '<span class="text-gray-400 font-normal text-xs">(leave blank to keep current)</span>' : '<span class="text-red-500">*</span>'}</label><input name="password" type="password" class="input" ${!u.id ? 'required minlength="6"' : ''} /></div>
     <div class="flex items-center gap-3">
       <input type="checkbox" name="can_create_tasks" id="cct" value="1" ${u.can_create_tasks ? 'checked' : ''} class="w-4 h-4 text-blue-600 rounded" />
       <label for="cct" class="text-sm text-gray-700">Allow task creation</label>
@@ -87,7 +87,7 @@ function userFormFields(u = {}) {
 
 function openCreateUserModal() {
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box">
         <div class="p-6 border-b border-gray-100 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-900">Add Team Member</h3>
@@ -124,7 +124,7 @@ function openEditUserModal(id) {
   const u = _users.find(x => x.id == id);
   if (!u) return;
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box">
         <div class="p-6 border-b border-gray-100 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-900">Edit: ${u.name}</h3>

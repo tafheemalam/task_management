@@ -17,6 +17,8 @@ require_once __DIR__ . '/controllers/AdminController.php';
 require_once __DIR__ . '/controllers/ManagerController.php';
 require_once __DIR__ . '/controllers/EmployeeController.php';
 require_once __DIR__ . '/controllers/SubscribeController.php';
+require_once __DIR__ . '/controllers/NotificationController.php';
+require_once __DIR__ . '/controllers/TagController.php';
 require_once __DIR__ . '/config/stripe.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -35,6 +37,22 @@ try {
     if ($path === '/subscribe' && $method === 'POST') { (new SubscribeController())->submit(); exit; }
     if ($path === '/subscribe/packages' && $method === 'GET') { (new SubscribeController())->listPackages(); exit; }
     if ($path === '/subscribe/payment-intent' && $method === 'POST') { (new SubscribeController())->createPaymentIntent(); exit; }
+
+    // Tags (both roles)
+    if ($path === '/tags' && $method === 'GET') { (new TagController())->listTags(); exit; }
+    if ($path === '/tags' && $method === 'POST') { (new TagController())->createTag(); exit; }
+    if (preg_match('#^/tags/(\d+)$#', $path, $m) && $method === 'DELETE') { (new TagController())->deleteTag((int)$m[1]); exit; }
+    if (preg_match('#^/(manager|employee)/tasks/(\d+)/tags$#', $path, $m) && $method === 'POST') {
+        (new TagController())->addTagToTask((int)$m[2]); exit;
+    }
+    if (preg_match('#^/(manager|employee)/tasks/(\d+)/tags/(\d+)$#', $path, $m) && $method === 'DELETE') {
+        (new TagController())->removeTagFromTask((int)$m[2], (int)$m[3]); exit;
+    }
+
+    // Notifications
+    if (preg_match('#^/(manager|employee)/notifications$#', $path) && $method === 'GET') { (new NotificationController())->list(); exit; }
+    if (preg_match('#^/(manager|employee)/notifications/all/read$#', $path) && $method === 'PUT') { (new NotificationController())->markAllRead(); exit; }
+    if (preg_match('#^/(manager|employee)/notifications/(\d+)/read$#', $path, $m) && $method === 'PUT') { (new NotificationController())->markRead((int)$m[2]); exit; }
 
     // Admin routes
     if ($segments[0] === 'admin') {
@@ -78,6 +96,9 @@ try {
             $sub === 'users' && $id && $method === 'PUT' && !$action => $mgr->updateUser($id),
             $sub === 'users' && $id && $action === 'toggle-status' && $method === 'PUT' => $mgr->toggleUserStatus($id),
             $sub === 'users' && $id && $action === 'toggle-task-creation' && $method === 'PUT' => $mgr->toggleTaskCreation($id),
+            $sub === 'workflows' && $id && $action === 'members' && $method === 'GET' => $mgr->listProjectMembers($id),
+            $sub === 'workflows' && $id && $action === 'members' && $method === 'POST' => $mgr->addProjectMember($id),
+            $sub === 'workflows' && $id && $action === 'members' && $method === 'DELETE' && isset($segments[4]) => $mgr->removeProjectMember($id, (int)$segments[4]),
             $sub === 'workflows' && $method === 'GET' => $mgr->listWorkflows(),
             $sub === 'workflows' && $method === 'POST' => $mgr->createWorkflow(),
             $sub === 'workflows' && $id && $method === 'PUT' => $mgr->updateWorkflow($id),
@@ -87,6 +108,7 @@ try {
             $sub === 'tasks' && $id && $action === 'comments' && $method === 'POST' => $mgr->addComment($id),
             $sub === 'tasks' && $id && $action === 'attachments' && $method === 'POST' => $mgr->uploadAttachment($id),
             $sub === 'tasks' && $id && $action === 'attachments' && $method === 'DELETE' && isset($segments[4]) => $mgr->deleteAttachment($id, (int)$segments[4]),
+            $sub === 'tasks' && $id && $action === 'activity' && $method === 'GET' => $mgr->getActivityLog($id),
             $sub === 'tasks' && $id && $method === 'GET' && !$action => $mgr->getTask($id),
             $sub === 'tasks' && $id && $method === 'PUT' && !$action => $mgr->updateTask($id),
             $sub === 'tasks' && $id && $method === 'DELETE' => $mgr->deleteTask($id),
@@ -106,6 +128,7 @@ try {
 
         match(true) {
             $sub === 'stats' && $method === 'GET' => $emp->stats(),
+            $sub === 'project-tasks' && $method === 'GET' => $emp->listProjectTasks(),
             $sub === 'tasks' && $method === 'GET' && !$id => $emp->listTasks(),
             $sub === 'tasks' && $method === 'POST' && !$id => $emp->createTask(),
             $sub === 'tasks' && $id && $method === 'GET' && !$action => $emp->getTask($id),
@@ -113,6 +136,7 @@ try {
             $sub === 'tasks' && $id && $action === 'comments' && $method === 'POST' => $emp->addComment($id),
             $sub === 'tasks' && $id && $action === 'attachments' && $method === 'POST' => $emp->uploadAttachment($id),
             $sub === 'tasks' && $id && $action === 'attachments' && $method === 'DELETE' && isset($segments[4]) => $emp->deleteAttachment($id, (int)$segments[4]),
+            $sub === 'tasks' && $id && $action === 'activity' && $method === 'GET' => $emp->getActivityLog($id),
             $sub === 'workflows' && $method === 'GET' => $emp->listWorkflows(),
             default => (function() { http_response_code(404); echo json_encode(['error' => 'Not found']); })()
         };

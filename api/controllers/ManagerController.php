@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../config/Database.php';
 require_once __DIR__ . '/../middleware/Auth.php';
+require_once __DIR__ . '/NotificationController.php';
 
 class ManagerController {
     private PDO $db;
@@ -118,6 +119,10 @@ class ManagerController {
             $stages = $this->db->prepare('SELECT * FROM workflow_stages WHERE workflow_id=? ORDER BY order_index ASC');
             $stages->execute([$wf['id']]);
             $wf['stages'] = $stages->fetchAll();
+
+            $members = $this->db->prepare('SELECT u.id, u.name, u.email FROM workflow_members wm JOIN users u ON wm.user_id=u.id WHERE wm.workflow_id=? ORDER BY u.name ASC');
+            $members->execute([$wf['id']]);
+            $wf['members'] = $members->fetchAll();
         }
         echo json_encode($workflows);
     }
@@ -223,6 +228,10 @@ class ManagerController {
         $att->execute([$id]);
         $task['attachments'] = $att->fetchAll();
 
+        $tags = $this->db->prepare('SELECT t.* FROM tags t JOIN task_tags tt ON t.id=tt.tag_id WHERE tt.task_id=?');
+        $tags->execute([$id]);
+        $task['tags'] = $tags->fetchAll();
+
         echo json_encode($task);
     }
 
@@ -318,9 +327,17 @@ class ManagerController {
         if (empty($b['workflow_id'])) { http_response_code(400); echo json_encode(['error' => 'Project (workflow) is required']); return; }
         $err = $this->validateTaskFields($b, $cid);
         if ($err) { http_response_code(400); echo json_encode(['error' => $err]); return; }
+        $stageId    = !empty($b['stage_id'])       ? (int)$b['stage_id']       : null;
+        $assigneeId = !empty($b['assignee_id'])    ? (int)$b['assignee_id']    : null;
+        $parentId   = !empty($b['parent_task_id']) ? (int)$b['parent_task_id'] : null;
         $stmt = $this->db->prepare('INSERT INTO tasks (company_id, title, description, priority, stage_id, workflow_id, assignee_id, creator_id, parent_task_id, start_date, due_date) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
-        $stmt->execute([$cid, $b['title'], $b['description'] ?? null, $b['priority'] ?? 'medium', $b['stage_id'] ?? null, $b['workflow_id'], $b['assignee_id'] ?? null, $this->authUser['id'], $b['parent_task_id'] ?? null, $b['start_date'] ?? null, $b['due_date'] ?? null]);
-        $id = $this->db->lastInsertId();
+        $stmt->execute([$cid, $b['title'], $b['description'] ?? null, $b['priority'] ?? 'medium', $stageId, $b['workflow_id'], $assigneeId, $this->authUser['id'], $parentId, $b['start_date'] ?? null, $b['due_date'] ?? null]);
+        $id = (int)$this->db->lastInsertId();
+        $this->logActivity($id, 'Task created', $b['title']);
+        if (!empty($assigneeId) && $assigneeId != $this->authUser['id']) {
+            NotificationController::create($this->db, $assigneeId, 'task_assigned',
+                "You have been assigned a task: " . $b['title'], $id);
+        }
         $this->getTask($id);
     }
 
@@ -333,7 +350,19 @@ class ManagerController {
         if (empty($b['workflow_id'])) { http_response_code(400); echo json_encode(['error' => 'Project (workflow) is required']); return; }
         $err = $this->validateTaskFields($b, $cid);
         if ($err) { http_response_code(400); echo json_encode(['error' => $err]); return; }
+        // Fetch old assignee before update to detect changes
+        $oldTask = $this->db->prepare('SELECT assignee_id, title FROM tasks WHERE id=?');
+        $oldTask->execute([$id]);
+        $oldRow = $oldTask->fetch();
+        $oldAssigneeId = $oldRow ? (int)$oldRow['assignee_id'] : null;
+
         $this->db->prepare('UPDATE tasks SET title=?, description=?, priority=?, stage_id=?, workflow_id=?, assignee_id=?, start_date=?, due_date=? WHERE id=?')->execute([$b['title'], $b['description'] ?? null, $b['priority'] ?? 'medium', $b['stage_id'] ?? null, $b['workflow_id'], $b['assignee_id'] ?? null, $b['start_date'] ?? null, $b['due_date'] ?? null, $id]);
+        $this->logActivity($id, 'Task updated');
+        $newAssigneeId = !empty($b['assignee_id']) ? (int)$b['assignee_id'] : null;
+        if ($newAssigneeId && $newAssigneeId !== $oldAssigneeId && $newAssigneeId != $this->authUser['id']) {
+            NotificationController::create($this->db, $newAssigneeId, 'task_assigned',
+                "You have been assigned a task: " . $b['title'], $id);
+        }
         $this->getTask($id);
     }
 
@@ -353,6 +382,7 @@ class ManagerController {
         $stmt = $this->db->prepare('INSERT INTO comments (task_id, user_id, content) VALUES (?,?,?)');
         $stmt->execute([$taskId, $this->authUser['id'], $b['content']]);
         $id = $this->db->lastInsertId();
+        $this->logActivity($taskId, 'Comment added', substr($b['content'], 0, 100));
         $row = $this->db->prepare('SELECT c.*, u.name as user_name FROM comments c JOIN users u ON c.user_id=u.id WHERE c.id=?');
         $row->execute([$id]);
         echo json_encode($row->fetch());
@@ -395,10 +425,28 @@ class ManagerController {
         );
         $priorities->execute([$cid]);
 
+        $assignees = $this->db->prepare(
+            'SELECT COALESCE(u.name,\'Unassigned\') AS assignee_name,
+                    COUNT(t.id)                       AS total,
+                    SUM(CASE WHEN ws.name IN (\'Done\',\'Closed\') THEN 1 ELSE 0 END) AS done,
+                    SUM(CASE WHEN t.due_date < CURDATE()
+                             AND (ws.name IS NULL OR ws.name NOT IN (\'Done\',\'Closed\'))
+                        THEN 1 ELSE 0 END) AS overdue
+             FROM tasks t
+             LEFT JOIN users u             ON t.assignee_id = u.id
+             LEFT JOIN workflow_stages ws  ON t.stage_id    = ws.id
+             WHERE t.company_id=? AND t.is_active=1 AND t.parent_task_id IS NULL
+             GROUP BY t.assignee_id, COALESCE(u.name,\'Unassigned\')
+             ORDER BY total DESC
+             LIMIT 15'
+        );
+        $assignees->execute([$cid]);
+
         echo json_encode([
             'by_stage'    => $stages->fetchAll(),
             'by_project'  => $projects->fetchAll(),
             'by_priority' => $priorities->fetchAll(),
+            'by_assignee' => $assignees->fetchAll(),
         ]);
     }
 
@@ -406,6 +454,76 @@ class ManagerController {
         $cid = $this->companyId();
         $stmt = $this->db->prepare("SELECT id, name, email, can_create_tasks FROM users WHERE company_id=? AND is_active=1 ORDER BY name ASC");
         $stmt->execute([$cid]);
+        echo json_encode($stmt->fetchAll());
+    }
+
+    // ── Project Members ───────────────────────────────────────────────────────
+
+    public function listProjectMembers(int $workflowId): void {
+        $cid = $this->companyId();
+        $check = $this->db->prepare('SELECT id FROM workflows WHERE id=? AND company_id=?');
+        $check->execute([$workflowId, $cid]);
+        if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Project not found']); return; }
+
+        $stmt = $this->db->prepare(
+            'SELECT u.id, u.name, u.email, wm.added_at
+             FROM workflow_members wm
+             JOIN users u ON wm.user_id = u.id
+             WHERE wm.workflow_id = ?
+             ORDER BY u.name ASC'
+        );
+        $stmt->execute([$workflowId]);
+        echo json_encode($stmt->fetchAll());
+    }
+
+    public function addProjectMember(int $workflowId): void {
+        $cid = $this->companyId();
+        $check = $this->db->prepare('SELECT id FROM workflows WHERE id=? AND company_id=?');
+        $check->execute([$workflowId, $cid]);
+        if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Project not found']); return; }
+
+        $b = json_decode(file_get_contents('php://input'), true);
+        if (empty($b['user_id'])) { http_response_code(400); echo json_encode(['error' => 'user_id required']); return; }
+
+        $userCheck = $this->db->prepare("SELECT id, name FROM users WHERE id=? AND company_id=? AND role='employee' AND is_active=1");
+        $userCheck->execute([$b['user_id'], $cid]);
+        $user = $userCheck->fetch();
+        if (!$user) { http_response_code(404); echo json_encode(['error' => 'Employee not found']); return; }
+
+        $stmt = $this->db->prepare('INSERT IGNORE INTO workflow_members (workflow_id, user_id) VALUES (?,?)');
+        $stmt->execute([$workflowId, $b['user_id']]);
+        echo json_encode(['success' => true, 'user' => $user]);
+    }
+
+    public function removeProjectMember(int $workflowId, int $userId): void {
+        $cid = $this->companyId();
+        $check = $this->db->prepare('SELECT id FROM workflows WHERE id=? AND company_id=?');
+        $check->execute([$workflowId, $cid]);
+        if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Project not found']); return; }
+
+        $this->db->prepare('DELETE FROM workflow_members WHERE workflow_id=? AND user_id=?')->execute([$workflowId, $userId]);
+        echo json_encode(['success' => true]);
+    }
+
+    // ── Activity Log ──────────────────────────────────────────────────────────
+
+    private function logActivity(int $taskId, string $action, string $detail = ''): void {
+        $uid = $this->authUser['id'];
+        $this->db->prepare('INSERT INTO activity_log (task_id, user_id, action, detail) VALUES (?,?,?,?)')
+                 ->execute([$taskId, $uid, $action, $detail]);
+    }
+
+    public function getActivityLog(int $taskId): void {
+        $cid = $this->companyId();
+        $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=? AND is_active=1');
+        $check->execute([$taskId, $cid]);
+        if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $stmt = $this->db->prepare(
+            'SELECT a.*, u.name as user_name FROM activity_log a
+             JOIN users u ON a.user_id = u.id
+             WHERE a.task_id=? ORDER BY a.created_at DESC LIMIT 50'
+        );
+        $stmt->execute([$taskId]);
         echo json_encode($stmt->fetchAll());
     }
 }

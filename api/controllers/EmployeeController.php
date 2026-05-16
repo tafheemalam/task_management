@@ -14,17 +14,49 @@ class EmployeeController {
     public function stats(): void {
         $uid = $this->authUser['id'];
         $cid = $this->authUser['company_id'];
-        $s1 = $this->db->prepare('SELECT COUNT(*) FROM tasks WHERE (assignee_id=? OR creator_id=?) AND is_active=1 AND parent_task_id IS NULL'); $s1->execute([$uid, $uid]); $myTasks = $s1->fetchColumn();
-        $s2 = $this->db->prepare("SELECT COUNT(*) FROM tasks t JOIN workflow_stages ws ON t.stage_id=ws.id WHERE (t.assignee_id=? OR t.creator_id=?) AND t.is_active=1 AND ws.name IN ('Done','Closed')"); $s2->execute([$uid, $uid]); $done = $s2->fetchColumn();
-        $s3 = $this->db->prepare('SELECT COUNT(*) FROM tasks WHERE (assignee_id=? OR creator_id=?) AND is_active=1 AND parent_task_id IS NULL AND due_date < CURDATE()'); $s3->execute([$uid, $uid]); $overdue = $s3->fetchColumn();
+        $s1 = $this->db->prepare('SELECT COUNT(*) FROM tasks t WHERE t.company_id=? AND (t.assignee_id=? OR t.creator_id=?) AND t.workflow_id IN (SELECT workflow_id FROM workflow_members WHERE user_id=?) AND t.is_active=1 AND t.parent_task_id IS NULL'); $s1->execute([$cid, $uid, $uid, $uid]); $myTasks = $s1->fetchColumn();
+        $s2 = $this->db->prepare("SELECT COUNT(*) FROM tasks t JOIN workflow_stages ws ON t.stage_id=ws.id WHERE t.company_id=? AND (t.assignee_id=? OR t.creator_id=?) AND t.workflow_id IN (SELECT workflow_id FROM workflow_members WHERE user_id=?) AND t.is_active=1 AND ws.name IN ('Done','Closed')"); $s2->execute([$cid, $uid, $uid, $uid]); $done = $s2->fetchColumn();
+        $s3 = $this->db->prepare('SELECT COUNT(*) FROM tasks t WHERE t.company_id=? AND (t.assignee_id=? OR t.creator_id=?) AND t.workflow_id IN (SELECT workflow_id FROM workflow_members WHERE user_id=?) AND t.is_active=1 AND t.parent_task_id IS NULL AND t.due_date < CURDATE()'); $s3->execute([$cid, $uid, $uid, $uid]); $overdue = $s3->fetchColumn();
         echo json_encode(['my_tasks' => (int)$myTasks, 'done' => (int)$done, 'overdue' => (int)$overdue]);
+    }
+
+    public function listProjectTasks(): void {
+        $uid = $this->authUser['id'];
+        $cid = $this->authUser['company_id'];
+        $stmt = $this->db->prepare(
+            'SELECT t.*, u.name as assignee_name, c.name as creator_name,
+                    ws.name as stage_name, ws.color as stage_color, w.name as workflow_name,
+                    (SELECT COUNT(*) FROM tasks WHERE parent_task_id=t.id AND is_active=1) as subtask_count
+             FROM tasks t
+             LEFT JOIN users u             ON t.assignee_id = u.id
+             LEFT JOIN users c             ON t.creator_id  = c.id
+             LEFT JOIN workflow_stages ws  ON t.stage_id    = ws.id
+             LEFT JOIN workflows w         ON t.workflow_id = w.id
+             WHERE t.company_id=? AND t.parent_task_id IS NULL AND t.is_active=1
+               AND t.workflow_id IN (SELECT workflow_id FROM workflow_members WHERE user_id=?)
+             ORDER BY t.created_at DESC'
+        );
+        $stmt->execute([$cid, $uid]);
+        echo json_encode($stmt->fetchAll());
     }
 
     public function listTasks(): void {
         $uid = $this->authUser['id'];
         $cid = $this->authUser['company_id'];
-        $stmt = $this->db->prepare('SELECT t.*, u.name as assignee_name, c.name as creator_name, ws.name as stage_name, ws.color as stage_color, w.name as workflow_name, (SELECT COUNT(*) FROM tasks WHERE parent_task_id=t.id AND is_active=1) as subtask_count FROM tasks t LEFT JOIN users u ON t.assignee_id=u.id LEFT JOIN users c ON t.creator_id=c.id LEFT JOIN workflow_stages ws ON t.stage_id=ws.id LEFT JOIN workflows w ON t.workflow_id=w.id WHERE t.company_id=? AND (t.assignee_id=? OR t.creator_id=?) AND t.parent_task_id IS NULL AND t.is_active=1 ORDER BY t.created_at DESC');
-        $stmt->execute([$cid, $uid, $uid]);
+        $stmt = $this->db->prepare(
+            'SELECT t.*, u.name as assignee_name, c.name as creator_name,
+                    ws.name as stage_name, ws.color as stage_color, w.name as workflow_name,
+                    (SELECT COUNT(*) FROM tasks WHERE parent_task_id=t.id AND is_active=1) as subtask_count
+             FROM tasks t
+             LEFT JOIN users u             ON t.assignee_id = u.id
+             LEFT JOIN users c             ON t.creator_id  = c.id
+             LEFT JOIN workflow_stages ws  ON t.stage_id    = ws.id
+             LEFT JOIN workflows w         ON t.workflow_id = w.id
+             WHERE t.company_id=? AND (t.assignee_id=? OR t.creator_id=?) AND t.parent_task_id IS NULL AND t.is_active=1
+               AND t.workflow_id IN (SELECT workflow_id FROM workflow_members WHERE user_id=?)
+             ORDER BY t.created_at DESC'
+        );
+        $stmt->execute([$cid, $uid, $uid, $uid]);
         echo json_encode($stmt->fetchAll());
     }
 
@@ -40,9 +72,10 @@ class EmployeeController {
              LEFT JOIN users cr           ON t.creator_id  = cr.id
              LEFT JOIN workflow_stages ws ON t.stage_id    = ws.id
              LEFT JOIN workflows w        ON t.workflow_id = w.id
-             WHERE t.id = ? AND t.company_id = ? AND t.is_active = 1'
+             WHERE t.id = ? AND t.company_id = ? AND t.is_active = 1
+               AND t.workflow_id IN (SELECT workflow_id FROM workflow_members WHERE user_id=?)'
         );
-        $stmt->execute([$id, $cid]);
+        $stmt->execute([$id, $cid, $uid]);
         $task = $stmt->fetch();
         if (!$task) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
 
@@ -63,6 +96,10 @@ class EmployeeController {
         $att = $this->db->prepare('SELECT a.*, u.name as uploader_name FROM task_attachments a JOIN users u ON a.uploaded_by=u.id WHERE a.task_id=? ORDER BY a.created_at ASC');
         $att->execute([$id]);
         $task['attachments'] = $att->fetchAll();
+
+        $tags = $this->db->prepare('SELECT t.* FROM tags t JOIN task_tags tt ON t.id=tt.tag_id WHERE tt.task_id=?');
+        $tags->execute([$id]);
+        $task['tags'] = $tags->fetchAll();
 
         echo json_encode($task);
     }
@@ -139,9 +176,9 @@ class EmployeeController {
         $b = json_decode(file_get_contents('php://input'), true);
         if (empty($b['title'])) { http_response_code(400); echo json_encode(['error' => 'Title required']); return; }
         if (empty($b['workflow_id'])) { http_response_code(400); echo json_encode(['error' => 'Project (workflow) is required']); return; }
-        // Employee may only create tasks in projects they are already part of
-        $wfAccess = $this->db->prepare('SELECT COUNT(*) FROM tasks WHERE workflow_id=? AND (assignee_id=? OR creator_id=?) AND is_active=1');
-        $wfAccess->execute([$b['workflow_id'], $uid, $uid]);
+        // Employee may only create tasks in projects they are a member of
+        $wfAccess = $this->db->prepare('SELECT COUNT(*) FROM workflow_members WHERE workflow_id=? AND user_id=?');
+        $wfAccess->execute([$b['workflow_id'], $uid]);
         if (!$wfAccess->fetchColumn()) { http_response_code(403); echo json_encode(['error' => 'You do not have access to this project']); return; }
         // For subtasks, verify access to the parent task
         if (!empty($b['parent_task_id'])) {
@@ -149,9 +186,13 @@ class EmployeeController {
             $parentAccess->execute([$b['parent_task_id'], $uid, $uid]);
             if (!$parentAccess->fetch()) { http_response_code(403); echo json_encode(['error' => 'You do not have access to the parent task']); return; }
         }
+        $stageId    = !empty($b['stage_id'])       ? (int)$b['stage_id']       : null;
+        $assigneeId = !empty($b['assignee_id'])    ? (int)$b['assignee_id']    : $uid;
+        $parentId   = !empty($b['parent_task_id']) ? (int)$b['parent_task_id'] : null;
         $stmt = $this->db->prepare('INSERT INTO tasks (company_id, title, description, priority, stage_id, workflow_id, assignee_id, creator_id, parent_task_id, start_date, due_date) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
-        $stmt->execute([$cid, $b['title'], $b['description'] ?? null, $b['priority'] ?? 'medium', $b['stage_id'] ?? null, $b['workflow_id'], $b['assignee_id'] ?? $uid, $uid, $b['parent_task_id'] ?? null, $b['start_date'] ?? null, $b['due_date'] ?? null]);
-        $id = $this->db->lastInsertId();
+        $stmt->execute([$cid, $b['title'], $b['description'] ?? null, $b['priority'] ?? 'medium', $stageId, $b['workflow_id'], $assigneeId, $uid, $parentId, $b['start_date'] ?? null, $b['due_date'] ?? null]);
+        $id = (int)$this->db->lastInsertId();
+        $this->logActivity($id, 'Task created', $b['title']);
         $this->getTask($id);
     }
 
@@ -174,6 +215,7 @@ class EmployeeController {
             return;
         }
         $this->db->prepare('UPDATE tasks SET stage_id=? WHERE id=?')->execute([$b['stage_id'], $id]);
+        $this->logActivity($id, 'Stage updated');
         echo json_encode(['success' => true]);
     }
 
@@ -185,13 +227,10 @@ class EmployeeController {
             'SELECT w.id, w.name
              FROM workflows w
              WHERE w.company_id = ? AND w.is_active = 1
-               AND w.id IN (
-                   SELECT DISTINCT workflow_id FROM tasks
-                   WHERE (assignee_id = ? OR creator_id = ?) AND is_active = 1
-               )
+               AND w.id IN (SELECT workflow_id FROM workflow_members WHERE user_id = ?)
              ORDER BY w.name ASC'
         );
-        $stmt->execute([$cid, $uid, $uid]);
+        $stmt->execute([$cid, $uid]);
         $workflows = $stmt->fetchAll();
 
         foreach ($workflows as &$wf) {
@@ -217,8 +256,35 @@ class EmployeeController {
         $stmt = $this->db->prepare('INSERT INTO comments (task_id, user_id, content) VALUES (?,?,?)');
         $stmt->execute([$taskId, $this->authUser['id'], $b['content']]);
         $id = $this->db->lastInsertId();
+        $this->logActivity($taskId, 'Comment added', substr($b['content'], 0, 100));
         $row = $this->db->prepare('SELECT c.*, u.name as user_name FROM comments c JOIN users u ON c.user_id=u.id WHERE c.id=?');
         $row->execute([$id]);
         echo json_encode($row->fetch());
+    }
+
+    // ── Activity Log ──────────────────────────────────────────────────────────
+
+    private function logActivity(int $taskId, string $action, string $detail = ''): void {
+        $uid = $this->authUser['id'];
+        $this->db->prepare('INSERT INTO activity_log (task_id, user_id, action, detail) VALUES (?,?,?,?)')
+                 ->execute([$taskId, $uid, $action, $detail]);
+    }
+
+    public function getActivityLog(int $taskId): void {
+        $uid = $this->authUser['id'];
+        $cid = $this->authUser['company_id'];
+        $check = $this->db->prepare(
+            'SELECT id FROM tasks WHERE id=? AND company_id=? AND is_active=1
+             AND workflow_id IN (SELECT workflow_id FROM workflow_members WHERE user_id=?)'
+        );
+        $check->execute([$taskId, $cid, $uid]);
+        if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $stmt = $this->db->prepare(
+            'SELECT a.*, u.name as user_name FROM activity_log a
+             JOIN users u ON a.user_id = u.id
+             WHERE a.task_id=? ORDER BY a.created_at DESC LIMIT 50'
+        );
+        $stmt->execute([$taskId]);
+        echo json_encode($stmt->fetchAll());
     }
 }

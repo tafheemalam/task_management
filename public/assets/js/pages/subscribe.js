@@ -304,7 +304,7 @@ function openPackageModal() {
   const hasBothTypes = monthly.length > 0 && yearly.length > 0;
 
   document.getElementById('pkg-modal-root').innerHTML = `
-    <div class="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closePkgModal()">
+    <div class="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
         <div class="flex items-center justify-between px-6 py-5 border-b border-gray-100">
           <div>

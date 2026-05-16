@@ -276,7 +276,7 @@ async function openEmpSubtaskModal(parentId, workflowId) {
   ).join('');
 
   openModal(`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay">
       <div class="modal-box">
         <div class="p-6 border-b border-gray-100 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-900">Add Subtask</h3>
