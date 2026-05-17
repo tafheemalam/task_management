@@ -3,6 +3,12 @@ let _currentTask      = null;
 let _currentWorkflows = [];
 let _currentUsers     = [];
 
+function renderMentions(text) {
+  if (!text) return '';
+  return escHtml(text).replace(/@([\w]+(?:\s[\w]+)?)/g,
+    '<span class="mention-chip">@$1</span>');
+}
+
 async function renderManagerTaskDetail(params = {}) {
   const taskId = params.id;
   if (!taskId) { navigate('manager-tasks'); return; }
@@ -49,6 +55,8 @@ async function loadTaskDetail(taskId) {
 
     renderTaskDetail();
     loadAndRenderActivityLog(taskId);
+    loadTimeLogs(taskId);
+    initMentionAutocomplete('new-comment', _currentUsers);
   } catch (err) {
     document.getElementById('task-detail-content').innerHTML =
       `<div class="text-center py-12 text-red-500">${err.message}</div>`;
@@ -78,14 +86,24 @@ function renderTaskDetail() {
               <div class="flex flex-wrap items-center gap-2">
                 ${priorityBadge(task.priority)}
                 ${stageBadge(task.stage_name, task.stage_color)}
+                ${task.recurrence_rule && task.recurrence_rule !== 'none' ? `
+                  <span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-purple-100 text-purple-700">
+                    <i class="fa-solid fa-rotate"></i> Repeats ${task.recurrence_rule}
+                  </span>` : ''}
                 <span class="text-xs text-gray-400">
                   <i class="fa-solid fa-user-pen mr-1"></i>by ${escHtml(task.creator_name || 'Unknown')}
                 </span>
               </div>
             </div>
-            <div class="flex items-center gap-2 shrink-0">
+            <div class="flex items-center gap-2 shrink-0 flex-wrap">
               <button class="btn-secondary text-xs" onclick="openEditTaskModal()">
                 <i class="fa-solid fa-pen"></i> Edit
+              </button>
+              <button class="btn-secondary text-xs" onclick="duplicateTask(${task.id})">
+                <i class="fa-solid fa-copy"></i> Duplicate
+              </button>
+              <button class="btn-secondary text-xs" onclick="saveCurrentTaskAsTemplate(${task.id})">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> Save as Template
               </button>
               <button class="btn-danger text-xs" onclick="deleteTaskFromDetail(${task.id})">
                 <i class="fa-solid fa-trash"></i>
@@ -118,15 +136,44 @@ function renderTaskDetail() {
             </div>
           </div>` : ''}
 
-        <!-- Subtasks -->
+        <!-- Checklist -->
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-semibold text-gray-800 flex items-center gap-2">
+              <i class="fa-solid fa-check-square text-indigo-500"></i> Checklist
+              <span class="text-xs text-gray-400 font-normal" id="checklist-count">(${(task.checklist || []).length})</span>
+            </h3>
+          </div>
+          <div id="checklist-progress-wrap" class="${(task.checklist || []).length ? '' : 'hidden'} mb-3">
+            <div class="flex items-center gap-2 text-xs text-gray-500 mb-1">
+              <span id="checklist-progress-text">${checklistProgressText(task.checklist || [])}</span>
+            </div>
+            <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div id="checklist-progress-bar" class="h-full bg-indigo-500 rounded-full transition-all"
+                   style="width:${checklistPct(task.checklist || [])}%"></div>
+            </div>
+          </div>
+          <div id="checklist-list" class="space-y-1 mb-3">
+            ${renderChecklistItems(task.checklist || [], task.id)}
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="text" id="new-checklist-item" class="input flex-1 text-sm" placeholder="Add checklist item…"
+                   onkeydown="if(event.key==='Enter'){addChecklistItem(${task.id});event.preventDefault();}" />
+            <button class="btn-secondary text-xs shrink-0" onclick="addChecklistItem(${task.id})">
+              <i class="fa-solid fa-plus"></i> Add
+            </button>
+          </div>
+        </div>
+
+        <!-- Subtasks (child tasks) -->
         <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
           <div class="flex items-center justify-between mb-4">
             <h3 class="font-semibold text-gray-800 flex items-center gap-2">
-              <i class="fa-solid fa-bars-staggered text-indigo-500"></i> Subtasks
+              <i class="fa-solid fa-bars-staggered text-indigo-500"></i> Sub-Tasks
               <span class="text-xs text-gray-400 font-normal">(${task.subtasks?.length || 0})</span>
             </h3>
             <button class="btn-secondary text-xs" onclick="openCreateSubtaskModal(${task.id})">
-              <i class="fa-solid fa-plus"></i> Add Subtask
+              <i class="fa-solid fa-plus"></i> Add Sub-Task
             </button>
           </div>
           <div id="subtasks-list">
@@ -134,7 +181,8 @@ function renderTaskDetail() {
               ? task.subtasks.map(s => `
                   <div class="flex items-center gap-3 py-3 border-b border-gray-50 last:border-0">
                     <div class="flex-1 min-w-0">
-                      <div class="text-sm font-medium text-gray-800">${escHtml(s.title)}</div>
+                      <div class="text-sm font-medium text-gray-800 cursor-pointer hover:text-indigo-600"
+                           onclick="navigate('manager-task-detail',{id:${s.id}})">${escHtml(s.title)}</div>
                       <div class="flex items-center gap-2 mt-1">
                         ${priorityBadge(s.priority)}
                         ${stageBadge(s.stage_name, s.stage_color)}
@@ -145,7 +193,7 @@ function renderTaskDetail() {
                   </div>`).join('')
               : `<div class="flex flex-col items-center py-8 text-center">
                    <i class="fa-solid fa-bars-staggered text-2xl text-gray-200 mb-2"></i>
-                   <p class="text-sm text-gray-400">No subtasks yet</p>
+                   <p class="text-sm text-gray-400">No sub-tasks yet</p>
                  </div>`}
           </div>
         </div>
@@ -207,6 +255,21 @@ function renderTaskDetail() {
           </div>
         </div>
 
+        <!-- Time Tracking -->
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-gray-800 flex items-center gap-2">
+              <i class="fa-solid fa-clock text-indigo-500"></i> Time Tracking
+            </h3>
+            <button class="btn-secondary text-xs" onclick="openLogTimeModal(${task.id})">
+              <i class="fa-solid fa-plus"></i> Log Time
+            </button>
+          </div>
+          <div id="time-logs-list">
+            <div class="text-sm text-gray-400 text-center py-4">Loading…</div>
+          </div>
+        </div>
+
         <!-- Activity Log -->
         <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
           <h3 class="font-semibold text-gray-800 mb-4 flex items-center gap-2">
@@ -241,6 +304,7 @@ function renderTaskDetail() {
             ${detailRow('Workflow', `<span class="text-gray-700">${escHtml(task.workflow_name || '—')}</span>`)}
             ${detailRow('Created', `<span class="text-gray-500">${formatDate(task.created_at)}</span>`)}
             ${detailRow('Creator', `<span class="text-gray-700">${escHtml(task.creator_name || '—')}</span>`)}
+            ${detailRow('Time Logged', `<span id="total-time-display" class="font-medium text-gray-700">—</span>`)}
 
             <!-- Tags -->
             <div class="pt-2">
@@ -252,8 +316,52 @@ function renderTaskDetail() {
                 <i class="fa-solid fa-tag"></i> Manage tags
               </button>
             </div>
+
+            <!-- Dependencies -->
+            <div class="pt-3 mt-1" style="border-top:1px solid #f1f5f9">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  <i class="fa-solid fa-link mr-1"></i> Blocked By
+                </span>
+                <button onclick="openAddDependencyModal(${task.id})"
+                        class="text-xs text-indigo-600 hover:underline font-medium">+ Add</button>
+              </div>
+              <div id="deps-list">
+                ${(task.dependencies || []).length
+                  ? (task.dependencies || []).map(d => `
+                      <div class="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0 group">
+                        <div class="flex-1 min-w-0">
+                          <div class="text-xs font-medium text-gray-700 truncate">${escHtml(d.title)}</div>
+                          <div class="mt-0.5">${stageBadge(d.stage_name, d.stage_color)}</div>
+                        </div>
+                        <button onclick="removeDep(${task.id}, ${d.id})"
+                                class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity text-xs">
+                          <i class="fa-solid fa-xmark"></i>
+                        </button>
+                      </div>`).join('')
+                  : '<p class="text-xs text-gray-400 italic">No blockers</p>'}
+              </div>
+            </div>
           </div>
         </div>
+
+        <!-- Custom Fields -->
+        ${(task.custom_values || []).length ? `
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+          <h3 class="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-sliders text-indigo-500"></i> Custom Fields
+          </h3>
+          <div class="space-y-3">
+            ${(task.custom_values || []).map(cv => `
+              <div>
+                <label class="text-xs text-gray-400 uppercase tracking-wider block mb-1">
+                  ${escHtml(cv.name)} ${cv.is_required ? '<span class="text-red-400">*</span>' : ''}
+                </label>
+                ${renderCustomFieldInput(task.id, cv)}
+              </div>`).join('')}
+          </div>
+        </div>` : ''}
+
       </div>
 
     </div>`;
@@ -290,7 +398,7 @@ function commentHtml(c) {
             <span class="text-sm font-semibold text-gray-800">${escHtml(c.user_name)}</span>
             <span class="text-xs text-gray-400">${formatDateTime(c.created_at)}</span>
           </div>
-          <div class="text-sm text-gray-600">${escHtml(c.content).replace(/\n/g, '<br>')}</div>
+          <div class="text-sm text-gray-600">${renderMentions(c.content).replace(/\n/g, '<br>')}</div>
         </div>
       </div>
     </div>`;
@@ -304,6 +412,43 @@ async function moveStageFromDetail(taskId, stageId) {
     showToast('Stage updated');
     await loadTaskDetail(taskId);
   } catch (err) { showToast(err.message, 'error'); }
+}
+
+function renderCustomFieldInput(taskId, cv) {
+  const val = cv.value != null ? cv.value : '';
+  const onchange = `saveCustomFieldValue(${taskId}, ${cv.field_id}, this)`;
+
+  switch (cv.field_type) {
+    case 'number':
+      return `<input type="number" class="input text-sm" value="${escHtml(val)}" onblur="${onchange}" />`;
+    case 'date':
+      return `<input type="date" class="input text-sm" value="${escHtml(val)}" onchange="${onchange}" />`;
+    case 'checkbox':
+      return `<label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" class="rounded text-indigo-600" ${val === '1' || val === 'true' ? 'checked' : ''}
+               onchange="saveCustomFieldValue(${taskId}, ${cv.field_id}, {value: this.checked ? '1' : '0'})" />
+        <span class="text-sm text-gray-600">Checked</span>
+      </label>`;
+    case 'select':
+      return `<select class="input text-sm" onchange="${onchange}">
+        <option value="">— Select —</option>
+        ${(cv.options || []).map(opt => `<option value="${escHtml(opt)}" ${val === opt ? 'selected' : ''}>${escHtml(opt)}</option>`).join('')}
+      </select>`;
+    default: // text
+      return `<input type="text" class="input text-sm" value="${escHtml(val)}" onblur="${onchange}" />`;
+  }
+}
+
+async function saveCustomFieldValue(taskId, fieldId, input) {
+  const value = input.value !== undefined ? input.value : input;
+  try {
+    await api.manager.updateTask(taskId, {
+      ..._currentTask,
+      custom_values: { [fieldId]: value },
+    });
+  } catch (err) {
+    showToast('Failed to save field: ' + err.message, 'error');
+  }
 }
 
 async function submitComment(taskId) {
@@ -375,6 +520,22 @@ function openEditTaskModal() {
             <div><label class="label">Due Date</label>
               <input name="due_date" type="date" class="input" value="${task.due_date || ''}" /></div>
           </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="label">Recurrence</label>
+              <select name="recurrence_rule" class="input" id="edit-recurrence-sel"
+                      onchange="document.getElementById('edit-recurrence-end-wrap').style.display=this.value!=='none'?'':'none'">
+                <option value="none" ${(!task.recurrence_rule || task.recurrence_rule === 'none') ? 'selected' : ''}>Does not repeat</option>
+                <option value="daily"   ${task.recurrence_rule === 'daily'   ? 'selected' : ''}>Daily</option>
+                <option value="weekly"  ${task.recurrence_rule === 'weekly'  ? 'selected' : ''}>Weekly</option>
+                <option value="monthly" ${task.recurrence_rule === 'monthly' ? 'selected' : ''}>Monthly</option>
+              </select>
+            </div>
+            <div id="edit-recurrence-end-wrap" style="display:${task.recurrence_rule && task.recurrence_rule !== 'none' ? '' : 'none'}">
+              <label class="label">Recurrence End Date</label>
+              <input name="recurrence_end_date" type="date" class="input" value="${task.recurrence_end_date || ''}" />
+            </div>
+          </div>
           <div id="edit-task-error" class="hidden p-3 bg-red-50 text-red-600 text-sm rounded-lg"></div>
           <div class="flex justify-end gap-3">
             <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
@@ -418,13 +579,20 @@ async function submitEditTask(e, taskId) {
   }
 }
 
-async function deleteTaskFromDetail(taskId) {
-  if (!confirmDialog('Delete this task and all its subtasks?')) return;
-  try {
-    await api.manager.deleteTask(taskId);
-    showToast('Task deleted');
-    navigate('manager-tasks');
-  } catch (err) { showToast(err.message, 'error'); }
+function deleteTaskFromDetail(taskId) {
+  showConfirm({
+    title: 'Delete task?',
+    message: 'This task and all its subtasks will be permanently deleted.',
+    confirmLabel: 'Delete',
+    confirmClass: 'btn-danger',
+    onConfirm: async () => {
+      try {
+        await api.manager.deleteTask(taskId);
+        showToast('Task deleted');
+        navigate('manager-tasks');
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+  });
 }
 
 function openCreateSubtaskModal(parentId) {
@@ -562,15 +730,22 @@ function prependMgrAttachment(taskId, a) {
   list.prepend(div);
 }
 
-async function deleteMgrAttachment(taskId, attachId, btn) {
-  if (!confirmDialog('Remove this attachment?')) return;
-  try {
-    await api.manager.deleteAttachment(taskId, attachId);
-    btn.closest('[data-attach-id]')?.remove();
-    showToast('Attachment removed');
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
+function deleteMgrAttachment(taskId, attachId, btn) {
+  showConfirm({
+    title: 'Remove attachment?',
+    message: 'This file will be permanently deleted.',
+    confirmLabel: 'Remove',
+    confirmClass: 'btn-danger',
+    onConfirm: async () => {
+      try {
+        await api.manager.deleteAttachment(taskId, attachId);
+        btn.closest('[data-attach-id]')?.remove();
+        showToast('Attachment removed');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+  });
 }
 
 // ── Activity Log ──────────────────────────────────────────────────────────────
@@ -678,4 +853,368 @@ async function createAndAttachTag(taskId) {
     closeModal();
     await loadTaskDetail(taskId);
   } catch(err) { showToast(err.message, 'error'); }
+}
+
+// ── Task Dependencies ─────────────────────────────────────────────────────────
+
+async function openAddDependencyModal(taskId) {
+  const tasks = await api.manager.listTasks().catch(() => []);
+  const others = tasks.filter(t => t.id !== taskId);
+
+  openModal(`
+    <div class="modal-overlay">
+      <div class="modal-box max-w-md">
+        <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+          <h3 class="font-semibold text-gray-900">Add Blocker Task</h3>
+          <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="p-5 space-y-3">
+          <p class="text-sm text-gray-500">Select a task that must be completed before this one:</p>
+          <div class="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2 bg-white focus-within:ring-2 focus-within:ring-indigo-300">
+            <i class="fa-solid fa-magnifying-glass text-gray-400 text-sm"></i>
+            <input type="text" id="dep-search" class="flex-1 text-sm outline-none" placeholder="Search tasks…"
+                   oninput="filterDepList(this.value)" />
+          </div>
+          <div id="dep-list" class="max-h-72 overflow-y-auto space-y-1">
+            ${others.map(t => `
+              <div class="dep-item flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer hover:bg-indigo-50 transition-colors"
+                   data-title="${escHtml(t.title).toLowerCase()}"
+                   onclick="selectDep(${taskId}, ${t.id})">
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium text-gray-800 truncate">${escHtml(t.title)}</div>
+                  <div class="flex items-center gap-1.5 mt-0.5">${stageBadge(t.stage_name, t.stage_color)} <span class="text-xs text-gray-400">${escHtml(t.workflow_name||'')}</span></div>
+                </div>
+              </div>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>`);
+}
+
+function filterDepList(q) {
+  document.querySelectorAll('.dep-item').forEach(el => {
+    el.style.display = el.dataset.title.includes(q.toLowerCase()) ? '' : 'none';
+  });
+}
+
+async function selectDep(taskId, depId) {
+  try {
+    await api.manager.addDependency(taskId, depId);
+    showToast('Blocker added');
+    closeModal();
+    await loadTaskDetail(taskId);
+  } catch(err) { showToast(err.message, 'error'); }
+}
+
+async function removeDep(taskId, depId) {
+  try {
+    await api.manager.removeDependency(taskId, depId);
+    showToast('Blocker removed');
+    await loadTaskDetail(taskId);
+  } catch(err) { showToast(err.message, 'error'); }
+}
+
+// ── Time Tracking ─────────────────────────────────────────────────────────────
+
+function formatMinutes(m) {
+  if (!m) return '0h 0m';
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  return h > 0 ? `${h}h ${min}m` : `${min}m`;
+}
+
+async function loadTimeLogs(taskId) {
+  try {
+    const logs = await api.manager.listTimeLogs(taskId);
+    const el = document.getElementById('time-logs-list');
+    const totalEl = document.getElementById('total-time-display');
+    if (!el) return;
+
+    const totalMins = logs.reduce((s, l) => s + (parseInt(l.minutes) || 0), 0);
+    if (totalEl) totalEl.textContent = formatMinutes(totalMins);
+
+    if (!logs.length) {
+      el.innerHTML = '<p class="text-sm text-gray-400 text-center py-2">No time logged yet</p>';
+      return;
+    }
+    el.innerHTML = logs.map(l => `
+      <div class="flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0 group">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0"
+             style="background:linear-gradient(135deg,#6366f1,#3b82f6)">${avatarInitials(l.user_name)}</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold text-indigo-600">${formatMinutes(l.minutes)}</span>
+            <span class="text-xs text-gray-400">${l.user_name}</span>
+          </div>
+          ${l.description ? `<div class="text-xs text-gray-500 truncate mt-0.5">${escHtml(l.description)}</div>` : ''}
+          <div class="text-xs text-gray-400 mt-0.5">${formatDate(l.logged_date)}</div>
+        </div>
+        <button onclick="deleteTimeLog(${taskId}, ${l.id})"
+                class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs transition-opacity p-1">
+          <i class="fa-solid fa-trash"></i>
+        </button>
+      </div>`).join('');
+  } catch {}
+}
+
+function openLogTimeModal(taskId) {
+  openModal(`
+    <div class="modal-overlay">
+      <div class="modal-box max-w-sm">
+        <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+          <h3 class="font-semibold text-gray-900"><i class="fa-solid fa-clock text-indigo-500 mr-2"></i>Log Time</h3>
+          <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="p-5 space-y-4">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="label">Hours</label>
+              <input id="log-hours" type="number" min="0" max="24" class="input" placeholder="0" value="0" />
+            </div>
+            <div>
+              <label class="label">Minutes <span class="text-red-500">*</span></label>
+              <input id="log-mins" type="number" min="0" max="59" class="input" placeholder="30" value="30" required />
+            </div>
+          </div>
+          <div>
+            <label class="label">Date</label>
+            <input id="log-date" type="date" class="input" value="${new Date().toISOString().split('T')[0]}" />
+          </div>
+          <div>
+            <label class="label">Description <span class="text-gray-400 font-normal text-xs">(optional)</span></label>
+            <input id="log-desc" type="text" class="input" placeholder="What did you work on?" />
+          </div>
+          <div id="log-time-error" class="hidden p-3 bg-red-50 text-red-600 text-sm rounded-lg"></div>
+          <div class="flex justify-end gap-3">
+            <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+            <button class="btn-primary" onclick="submitTimeLog(${taskId})">
+              <i class="fa-solid fa-check"></i> Log Time
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`);
+}
+
+async function submitTimeLog(taskId) {
+  const hours   = parseInt(document.getElementById('log-hours')?.value || '0');
+  const mins    = parseInt(document.getElementById('log-mins')?.value  || '0');
+  const total   = hours * 60 + mins;
+  const date    = document.getElementById('log-date')?.value;
+  const desc    = document.getElementById('log-desc')?.value;
+  const errEl   = document.getElementById('log-time-error');
+  if (total <= 0) { errEl.textContent = 'Please enter a time greater than 0'; errEl.classList.remove('hidden'); return; }
+  try {
+    await api.manager.addTimeLog(taskId, { minutes: total, logged_date: date, description: desc });
+    showToast(`${formatMinutes(total)} logged!`);
+    closeModal();
+    await loadTimeLogs(taskId);
+  } catch(err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
+}
+
+async function deleteTimeLog(taskId, logId) {
+  try {
+    await api.manager.deleteTimeLog(taskId, logId);
+    showToast('Log removed');
+    await loadTimeLogs(taskId);
+  } catch(err) { showToast(err.message, 'error'); }
+}
+
+// ── @Mention Autocomplete ─────────────────────────────────────────────────────
+
+function initMentionAutocomplete(textareaId, users) {
+  const ta = document.getElementById(textareaId);
+  if (!ta || !users?.length) return;
+
+  let dropdown = null;
+
+  ta.addEventListener('input', () => {
+    const val = ta.value;
+    const cursor = ta.selectionStart;
+    const textBefore = val.substring(0, cursor);
+    const atMatch = textBefore.match(/@(\w*)$/);
+
+    if (dropdown) { dropdown.remove(); dropdown = null; }
+    if (!atMatch) return;
+
+    const query = atMatch[1].toLowerCase();
+    const matches = users.filter(u => u.name.toLowerCase().includes(query)).slice(0, 5);
+    if (!matches.length) return;
+
+    dropdown = document.createElement('div');
+    dropdown.className = 'absolute z-50 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden';
+    dropdown.style.cssText = 'min-width:200px;max-width:280px';
+
+    matches.forEach(u => {
+      const item = document.createElement('div');
+      item.className = 'flex items-center gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-indigo-50 transition-colors';
+      item.innerHTML = `
+        <div class="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0"
+             style="background:linear-gradient(135deg,#6366f1,#3b82f6)">${avatarInitials(u.name)}</div>
+        <span class="text-sm font-medium text-gray-700">${u.name}</span>`;
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const start  = textBefore.lastIndexOf('@');
+        const before = val.substring(0, start);
+        const after  = val.substring(cursor);
+        ta.value = before + '@' + u.name + ' ' + after;
+        ta.focus();
+        if (dropdown) { dropdown.remove(); dropdown = null; }
+      });
+      dropdown.appendChild(item);
+    });
+
+    const rect = ta.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
+    dropdown.style.left = (rect.left  + window.scrollX) + 'px';
+    document.body.appendChild(dropdown);
+  });
+
+  document.addEventListener('click', () => { if (dropdown) { dropdown.remove(); dropdown = null; } }, { capture: true });
+}
+
+// ── Checklist ─────────────────────────────────────────────────────────────────
+
+function checklistPct(items) {
+  if (!items || !items.length) return 0;
+  const done = items.filter(i => +i.is_done).length;
+  return Math.round((done / items.length) * 100);
+}
+
+function checklistProgressText(items) {
+  if (!items || !items.length) return '';
+  const done = items.filter(i => +i.is_done).length;
+  return `${done} of ${items.length} done`;
+}
+
+function renderChecklistItems(items, taskId) {
+  if (!items || !items.length) {
+    return '<p class="text-sm text-gray-400 italic py-2">No checklist items yet</p>';
+  }
+  return items.map(item => `
+    <div class="flex items-center gap-2 py-1.5 group" data-checklist-id="${item.id}">
+      <input type="checkbox" class="w-4 h-4 rounded accent-indigo-600 shrink-0 cursor-pointer"
+             ${+item.is_done ? 'checked' : ''}
+             onchange="toggleChecklistItem(${taskId}, ${item.id}, this.checked)" />
+      <span class="flex-1 text-sm ${+item.is_done ? 'line-through text-gray-400' : 'text-gray-700'}">${escHtml(item.title)}</span>
+      <button onclick="deleteChecklistItem(${taskId}, ${item.id})"
+              class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs transition-opacity p-1 shrink-0">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>`).join('');
+}
+
+function updateChecklistUI(items) {
+  const pct = checklistPct(items);
+  const progressWrap = document.getElementById('checklist-progress-wrap');
+  const progressBar  = document.getElementById('checklist-progress-bar');
+  const progressText = document.getElementById('checklist-progress-text');
+  const countEl      = document.getElementById('checklist-count');
+  if (progressWrap) progressWrap.classList.toggle('hidden', items.length === 0);
+  if (progressBar)  progressBar.style.width = pct + '%';
+  if (progressText) progressText.textContent = checklistProgressText(items);
+  if (countEl)      countEl.textContent = `(${items.length})`;
+}
+
+async function addChecklistItem(taskId) {
+  const input = document.getElementById('new-checklist-item');
+  const title = input?.value?.trim();
+  if (!title) return;
+  try {
+    const user = state.user || {};
+    const apiObj = user.role === 'manager' ? api.manager : api.employee;
+    await apiObj.createSubtask(taskId, { title });
+    input.value = '';
+    // Reload task detail to refresh checklist
+    await loadTaskDetail(taskId);
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function toggleChecklistItem(taskId, subtaskId, isDone) {
+  try {
+    const user = state.user || {};
+    const apiObj = user.role === 'manager' ? api.manager : api.employee;
+    await apiObj.updateSubtask(taskId, subtaskId, { is_done: isDone ? 1 : 0 });
+    // Update UI locally
+    const row = document.querySelector(`[data-checklist-id="${subtaskId}"]`);
+    if (row) {
+      const span = row.querySelector('span');
+      if (span) span.className = `flex-1 text-sm ${isDone ? 'line-through text-gray-400' : 'text-gray-700'}`;
+    }
+    // Recalculate progress
+    const allChecks = Array.from(document.querySelectorAll('[data-checklist-id]'));
+    const items = allChecks.map(el => ({
+      id: +el.dataset.checklistId,
+      is_done: el.querySelector('input[type=checkbox]')?.checked ? 1 : 0,
+    }));
+    updateChecklistUI(items);
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function deleteChecklistItem(taskId, subtaskId) {
+  try {
+    const user = state.user || {};
+    const apiObj = user.role === 'manager' ? api.manager : api.employee;
+    await apiObj.deleteSubtask(taskId, subtaskId);
+    document.querySelector(`[data-checklist-id="${subtaskId}"]`)?.remove();
+    // Recalculate progress
+    const allChecks = Array.from(document.querySelectorAll('[data-checklist-id]'));
+    const items = allChecks.map(el => ({
+      id: +el.dataset.checklistId,
+      is_done: el.querySelector('input[type=checkbox]')?.checked ? 1 : 0,
+    }));
+    updateChecklistUI(items);
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+// ── Duplicate Task ────────────────────────────────────────────────────────────
+
+function duplicateTask(taskId) {
+  showConfirm({
+    title: 'Duplicate task?',
+    message: 'A copy of this task will be created.',
+    confirmLabel: 'Duplicate',
+    confirmClass: 'btn-primary',
+    onConfirm: async () => {
+      try {
+        const user = state.user || {};
+        const apiObj = user.role === 'manager' ? api.manager : api.employee;
+        const data = await apiObj.duplicateTask(taskId);
+        showToast('Task duplicated!', 'success');
+        navigate(user.role === 'manager' ? 'manager-task-detail' : 'employee-task-detail', { id: data.data.id });
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+  });
+}
+
+// ── Save as Template ──────────────────────────────────────────────────────────
+
+function saveCurrentTaskAsTemplate(taskId) {
+  const taskTitle = _currentTask?.title || '';
+  const overlay = document.createElement('div');
+  overlay.id = 'save-task-tpl-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-box max-w-sm animate-fade-in-up" style="padding:28px">
+      <h3 class="font-semibold text-gray-900 mb-1">Save as Task Template</h3>
+      <p class="text-sm text-gray-500 mb-4">Enter a name for this template.</p>
+      <input id="save-task-tpl-name" type="text" class="input mb-4" value="Template: ${escHtml(taskTitle)}" placeholder="Template name" />
+      <div class="flex gap-2 justify-end">
+        <button class="btn-secondary" onclick="document.getElementById('save-task-tpl-overlay').remove()">Cancel</button>
+        <button class="btn-primary" onclick="confirmSaveTaskTemplate(${taskId})"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => { const inp = document.getElementById('save-task-tpl-name'); if (inp) { inp.focus(); inp.select(); } }, 50);
+}
+
+async function confirmSaveTaskTemplate(taskId) {
+  const name = document.getElementById('save-task-tpl-name')?.value.trim();
+  if (!name) { showToast('Please enter a template name', 'error'); return; }
+  document.getElementById('save-task-tpl-overlay')?.remove();
+  try {
+    await api.manager.saveTaskAsTemplate(taskId, { template_name: name });
+    showToast('Saved as template!', 'success');
+  } catch (err) { showToast(err.message, 'error'); }
 }

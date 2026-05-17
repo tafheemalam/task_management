@@ -1,3 +1,11 @@
+function renderMentionsEmp(text) {
+  if (!text) return '';
+  // escHtml for employee is done inline in template strings; apply escaping then mention highlight
+  const escaped = String(text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return escaped.replace(/@([\w]+(?:\s[\w]+)?)/g, '<span class="mention-chip">@$1</span>');
+}
+
 async function renderEmployeeTaskDetail(params = {}) {
   const taskId = params.id;
   if (!taskId) { navigate('employee-tasks'); return; }
@@ -152,7 +160,7 @@ function renderEmpTaskDetail(task) {
                 <span class="text-sm font-semibold text-gray-800">${c.user_name}</span>
                 <span class="text-xs text-gray-400">${formatDateTime(c.created_at)}</span>
               </div>
-              <div class="text-sm text-gray-600">${c.content.replace(/\n/g, '<br>')}</div>
+              <div class="text-sm text-gray-600">${renderMentionsEmp(c.content).replace(/\n/g, '<br>')}</div>
             </div>
           </div>
         </div>`).join('')
@@ -185,6 +193,33 @@ function renderEmpTaskDetail(task) {
 
         <!-- Status update / lock -->
         ${moveTaskHtml}
+
+        <!-- Checklist -->
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-semibold text-gray-800 flex items-center gap-2">
+              <i class="fa-solid fa-check-square text-indigo-500"></i> Checklist
+              <span class="text-xs text-gray-400 font-normal" id="emp-checklist-count">(${(task.checklist || []).length})</span>
+            </h3>
+          </div>
+          <div id="emp-checklist-progress-wrap" class="${(task.checklist || []).length ? '' : 'hidden'} mb-3">
+            <div class="text-xs text-gray-500 mb-1" id="emp-checklist-progress-text">${empChecklistProgressText(task.checklist || [])}</div>
+            <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div id="emp-checklist-progress-bar" class="h-full bg-indigo-500 rounded-full transition-all"
+                   style="width:${empChecklistPct(task.checklist || [])}%"></div>
+            </div>
+          </div>
+          <div id="emp-checklist-list" class="space-y-1 mb-3">
+            ${renderEmpChecklistItems(task.checklist || [], task.id)}
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="text" id="emp-new-checklist-item" class="input flex-1 text-sm" placeholder="Add checklist item…"
+                   onkeydown="if(event.key==='Enter'){addEmpChecklistItem(${task.id});event.preventDefault();}" />
+            <button class="btn-secondary text-xs shrink-0" onclick="addEmpChecklistItem(${task.id})">
+              <i class="fa-solid fa-plus"></i> Add
+            </button>
+          </div>
+        </div>
 
         <!-- Subtasks -->
         ${subtasksHtml}
@@ -429,13 +464,104 @@ function prependEmpAttachment(taskId, a) {
   list.prepend(div);
 }
 
-async function deleteEmpAttachment(taskId, attachId, btn) {
-  if (!confirmDialog('Remove this attachment?')) return;
-  try {
-    await api.employee.deleteAttachment(taskId, attachId);
-    btn.closest('[data-attach-id]')?.remove();
-    showToast('Attachment removed');
-  } catch (err) {
-    showToast(err.message, 'error');
+function deleteEmpAttachment(taskId, attachId, btn) {
+  showConfirm({
+    title: 'Remove attachment?',
+    message: 'This file will be permanently deleted.',
+    confirmLabel: 'Remove',
+    confirmClass: 'btn-danger',
+    onConfirm: async () => {
+      try {
+        await api.employee.deleteAttachment(taskId, attachId);
+        btn.closest('[data-attach-id]')?.remove();
+        showToast('Attachment removed');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+  });
+}
+
+// ── Employee Checklist ────────────────────────────────────────────────────────
+
+function empChecklistPct(items) {
+  if (!items || !items.length) return 0;
+  const done = items.filter(i => +i.is_done).length;
+  return Math.round((done / items.length) * 100);
+}
+
+function empChecklistProgressText(items) {
+  if (!items || !items.length) return '';
+  const done = items.filter(i => +i.is_done).length;
+  return `${done} of ${items.length} done`;
+}
+
+function renderEmpChecklistItems(items, taskId) {
+  if (!items || !items.length) {
+    return '<p class="text-sm text-gray-400 italic py-2">No checklist items yet</p>';
   }
+  return items.map(item => `
+    <div class="flex items-center gap-2 py-1.5 group" data-emp-checklist-id="${item.id}">
+      <input type="checkbox" class="w-4 h-4 rounded accent-indigo-600 shrink-0 cursor-pointer"
+             ${+item.is_done ? 'checked' : ''}
+             onchange="toggleEmpChecklistItem(${taskId}, ${item.id}, this.checked)" />
+      <span class="flex-1 text-sm ${+item.is_done ? 'line-through text-gray-400' : 'text-gray-700'}">${item.title}</span>
+      <button onclick="deleteEmpChecklistItem(${taskId}, ${item.id})"
+              class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs transition-opacity p-1 shrink-0">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>`).join('');
+}
+
+function updateEmpChecklistUI(items) {
+  const pct = empChecklistPct(items);
+  const wrap = document.getElementById('emp-checklist-progress-wrap');
+  const bar  = document.getElementById('emp-checklist-progress-bar');
+  const text = document.getElementById('emp-checklist-progress-text');
+  const cnt  = document.getElementById('emp-checklist-count');
+  if (wrap) wrap.classList.toggle('hidden', items.length === 0);
+  if (bar)  bar.style.width = pct + '%';
+  if (text) text.textContent = empChecklistProgressText(items);
+  if (cnt)  cnt.textContent = `(${items.length})`;
+}
+
+async function addEmpChecklistItem(taskId) {
+  const input = document.getElementById('emp-new-checklist-item');
+  const title = input?.value?.trim();
+  if (!title) return;
+  try {
+    await api.employee.createSubtask(taskId, { title });
+    input.value = '';
+    await loadEmpTaskDetail(taskId);
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function toggleEmpChecklistItem(taskId, subtaskId, isDone) {
+  try {
+    await api.employee.updateSubtask(taskId, subtaskId, { is_done: isDone ? 1 : 0 });
+    const row = document.querySelector(`[data-emp-checklist-id="${subtaskId}"]`);
+    if (row) {
+      const span = row.querySelector('span');
+      if (span) span.className = `flex-1 text-sm ${isDone ? 'line-through text-gray-400' : 'text-gray-700'}`;
+    }
+    const allChecks = Array.from(document.querySelectorAll('[data-emp-checklist-id]'));
+    const items = allChecks.map(el => ({
+      id: +el.dataset.empChecklistId,
+      is_done: el.querySelector('input[type=checkbox]')?.checked ? 1 : 0,
+    }));
+    updateEmpChecklistUI(items);
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function deleteEmpChecklistItem(taskId, subtaskId) {
+  try {
+    await api.employee.deleteSubtask(taskId, subtaskId);
+    document.querySelector(`[data-emp-checklist-id="${subtaskId}"]`)?.remove();
+    const allChecks = Array.from(document.querySelectorAll('[data-emp-checklist-id]'));
+    const items = allChecks.map(el => ({
+      id: +el.dataset.empChecklistId,
+      is_done: el.querySelector('input[type=checkbox]')?.checked ? 1 : 0,
+    }));
+    updateEmpChecklistUI(items);
+  } catch (err) { showToast(err.message, 'error'); }
 }

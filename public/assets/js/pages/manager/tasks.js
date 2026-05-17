@@ -13,7 +13,21 @@ async function renderManagerTasks() {
           <button class="btn-secondary text-xs" onclick="setView('board')" id="btn-board"><i class="fa-solid fa-table-columns"></i> Board</button>
           <button class="btn-secondary text-xs" onclick="setView('list')" id="btn-list"><i class="fa-solid fa-list"></i> List</button>
           <button class="btn-secondary text-xs" onclick="navigate('manager-gantt')"><i class="fa-solid fa-chart-gantt"></i> Gantt</button>
-          <button class="btn-secondary text-xs" onclick="exportTasksToCSV(_allTasks, 'tasks.csv')"><i class="fa-solid fa-download"></i> CSV</button>
+          <div class="relative" id="export-menu-wrapper">
+            <button class="btn-secondary text-xs" onclick="toggleExportMenu()">
+              <i class="fa-solid fa-download"></i> Export <i class="fa-solid fa-chevron-down text-[10px] ml-0.5"></i>
+            </button>
+            <div id="export-menu" class="hidden absolute right-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-50 min-w-36">
+              <button class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      onclick="toggleExportMenu();exportTasksToCSV(_allTasks,'tasks.csv')">
+                <i class="fa-solid fa-file-csv text-green-600 w-4"></i> CSV
+              </button>
+              <button class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      onclick="toggleExportMenu();exportTasksToPDF(_allTasks,'Task Report')">
+                <i class="fa-solid fa-file-pdf text-red-500 w-4"></i> PDF
+              </button>
+            </div>
+          </div>
           <button class="btn-primary" onclick="openCreateTaskModal()"><i class="fa-solid fa-plus"></i> New Task</button>
         </div>`)}
       <div class="rounded-2xl p-4 mb-4" style="background:linear-gradient(135deg,#eef2ff 0%,#f8fafc 100%);border:1px solid #e0e7ff">
@@ -64,7 +78,7 @@ async function renderManagerTasks() {
           </div>
         </div>
       </div>
-      <div id="tasks-view">Loading...</div>
+      <div id="tasks-view">${skeletonTable(5, 7)}</div>
       <div id="bulk-action-bar" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-40
            bg-gray-900 text-white rounded-2xl shadow-2xl px-6 py-3 flex items-center gap-4">
         <span id="bulk-count" class="text-sm font-medium"></span>
@@ -173,7 +187,7 @@ function renderBoard(tasks) {
           <div class="flex-1 p-2 space-y-2 min-h-[120px]">
             ${(tasksByStage[s.id] || []).map(t => taskCard(t)).join('')}
             ${!tasksByStage[s.id]?.length
-              ? `<div class="kanban-drop-hint flex items-center justify-center h-20 rounded-lg border-2 border-dashed border-gray-200 text-xs text-gray-300">Drop here</div>`
+              ? emptyColumnState()
               : ''}
           </div>
         </div>`).join('')}
@@ -222,7 +236,7 @@ function renderList(tasks) {
   const viewEl = document.getElementById('tasks-view');
 
   if (!tasks.length) {
-    viewEl.innerHTML = emptyState('fa-list-check', 'No tasks found', 'Try adjusting your filters');
+    viewEl.innerHTML = emptyState('fa-list-check', 'No tasks found', 'Try adjusting your filters or create a new task', `<button class="btn-primary" onclick="openCreateTaskModal()"><i class="fa-solid fa-plus"></i> New Task</button>`);
     return;
   }
 
@@ -247,9 +261,9 @@ function renderList(tasks) {
 
   viewEl.innerHTML = `
     <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-      <div class="overflow-x-auto">
+      <div style="overflow-y:auto; max-height:calc(100vh - 240px); border-radius:12px;">
         <table class="w-full">
-          <thead class="bg-gray-50 border-b border-gray-200">
+          <thead style="position:sticky;top:0;z-index:10;background:#f8fafc;" class="border-b border-gray-200">
             <tr>
               <th class="px-4 py-3 w-10 text-left">
                 <input type="checkbox" class="w-4 h-4 rounded accent-blue-600" onchange="bulkSelectAll(this.checked)" />
@@ -311,14 +325,24 @@ function renderList(tasks) {
     </div>`;
 }
 
+const _CARD_PALETTE = [
+  '#f97316', // orange
+  '#6366f1', // indigo
+  '#10b981', // emerald
+  '#8b5cf6', // violet
+  '#0ea5e9', // sky
+  '#ec4899', // pink
+  '#14b8a6', // teal
+  '#f59e0b', // amber
+];
+
 function taskCard(t) {
-  const priorityAccent = { high: '#ef4444', medium: '#f59e0b', low: '#22c55e' };
-  const accent = priorityAccent[t.priority] || '#6366f1';
+  const accent = _CARD_PALETTE[t.id % _CARD_PALETTE.length];
   const od = isOverdue(t.due_date) && !['Done','Closed'].includes(t.stage_name);
 
   return `
     <div class="task-card select-none group"
-         style="border-left:3px solid ${accent}"
+         style="border-left:4px solid ${accent}"
          draggable="true"
          data-task-id="${t.id}"
          ondragstart="startDrag(event, ${t.id})"
@@ -395,6 +419,18 @@ function taskFormFields(t = {}, workflows, users) {
       </div>
       <div><label class="label">Start Date</label><input name="start_date" type="date" class="input" value="${t.start_date || ''}" /></div>
       <div><label class="label">Due Date <span class="text-red-500">*</span></label><input name="due_date" type="date" class="input" value="${t.due_date || ''}" required /></div>
+      <div><label class="label">Recurrence</label>
+        <select name="recurrence_rule" class="input" id="task-recurrence" onchange="document.getElementById('recurrence-end-wrap').style.display=this.value!=='none'?'':'none'">
+          <option value="none" ${(!t.recurrence_rule || t.recurrence_rule === 'none') ? 'selected' : ''}>Does not repeat</option>
+          <option value="daily"   ${t.recurrence_rule === 'daily'   ? 'selected' : ''}>Daily</option>
+          <option value="weekly"  ${t.recurrence_rule === 'weekly'  ? 'selected' : ''}>Weekly</option>
+          <option value="monthly" ${t.recurrence_rule === 'monthly' ? 'selected' : ''}>Monthly</option>
+        </select>
+      </div>
+      <div id="recurrence-end-wrap" style="display:${t.recurrence_rule && t.recurrence_rule !== 'none' ? '' : 'none'}">
+        <label class="label">Recurrence End Date (optional)</label>
+        <input name="recurrence_end_date" type="date" class="input" value="${t.recurrence_end_date || ''}" />
+      </div>
     </div>`;
 }
 
@@ -412,44 +448,219 @@ function loadStagesForTask(wfId, selectedStageId = '') {
       sel.appendChild(o);
     });
   }
+  // Load custom fields for this workflow
+  if (wfId) {
+    loadTaskFormCustomFields(wfId);
+  } else {
+    const cfArea = document.getElementById('task-custom-fields-area');
+    if (cfArea) cfArea.innerHTML = '';
+  }
+}
+
+async function loadTaskFormCustomFields(wfId) {
+  const cfArea = document.getElementById('task-custom-fields-area');
+  if (!cfArea) return;
+  try {
+    const fields = await api.manager.listCustomFields(wfId);
+    if (!fields.length) { cfArea.innerHTML = ''; return; }
+    cfArea.innerHTML = `
+      <div class="border-t border-gray-100 pt-4 mt-2">
+        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+          <i class="fa-solid fa-sliders mr-1"></i> Custom Fields
+        </p>
+        ${fields.map(f => `
+          <div class="mb-3">
+            <label class="label">${taskEscHtml(f.name)}${f.is_required ? ' <span class="text-red-400">*</span>' : ''}</label>
+            ${taskRenderCfInput(f)}
+          </div>`).join('')}
+      </div>`;
+  } catch (_) {
+    cfArea.innerHTML = '';
+  }
+}
+
+function taskRenderCfInput(f) {
+  switch (f.field_type) {
+    case 'number':   return `<input type="number" name="cf_${f.id}" class="input" />`;
+    case 'date':     return `<input type="date" name="cf_${f.id}" class="input" />`;
+    case 'checkbox': return `<label class="flex items-center gap-2"><input type="checkbox" name="cf_${f.id}" value="1" class="rounded" /> <span class="text-sm text-gray-700">Yes</span></label>`;
+    case 'select':   return `<select name="cf_${f.id}" class="input"><option value="">— Select —</option>${(f.options||[]).map(o=>`<option value="${taskEscHtml(o)}">${taskEscHtml(o)}</option>`).join('')}</select>`;
+    default:         return `<input type="text" name="cf_${f.id}" class="input" />`;
+  }
+}
+
+function taskEscHtml(str) {
+  if (str == null) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function openCreateTaskModal(parentId = null) {
+  const wfOptions  = _allWorkflows.map(w => `<option value="${w.id}">${taskEscHtml(w.name)}</option>`).join('');
+  const userOptions = _allCompanyUsers.map(u => `<option value="${u.id}">${taskEscHtml(u.name)}</option>`).join('');
+
   openModal(`
     <div class="modal-overlay">
-      <div class="modal-box">
-        <div class="p-6 border-b border-gray-100 flex items-center justify-between">
-          <h3 class="text-lg font-semibold text-gray-900">${parentId ? 'New Subtask' : 'New Task'}</h3>
-          <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <form id="task-form" onsubmit="submitCreateTask(event,${parentId || 'null'})" class="p-6 space-y-4">
-          ${taskFormFields({}, _allWorkflows, _allCompanyUsers)}
-          ${parentId ? `<input type="hidden" name="parent_task_id" value="${parentId}" />` : ''}
-          <div>
-            <label class="label">Attachments <span class="text-gray-400 font-normal text-xs">(optional)</span></label>
-            <label class="flex items-center gap-2 cursor-pointer border-2 border-dashed border-gray-200 rounded-lg p-3 hover:border-blue-300 hover:bg-blue-50 transition-all">
-              <i class="fa-solid fa-paperclip text-gray-400 text-sm"></i>
-              <span id="modal-attach-label" class="text-sm text-gray-400 flex-1">Choose files…</span>
-              <input type="file" id="modal-attach-files" multiple class="hidden"
-                     onchange="updateAttachLabel(this,'modal-attach-label')" />
-            </label>
+      <div class="modal-box" style="max-width:820px;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">
+
+        <!-- Header -->
+        <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+          <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#6366f1,#3b82f6)">
+              <i class="fa-solid fa-plus text-white text-sm"></i>
+            </div>
+            <h3 class="text-lg font-semibold text-gray-900">${parentId ? 'New Subtask' : 'Create New Task'}</h3>
           </div>
-          <div id="task-error" class="hidden p-3 bg-red-50 text-red-600 text-sm rounded-lg"></div>
-          <div class="flex justify-end gap-3">
-            <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
-            <button type="submit" class="btn-primary">Create Task</button>
+          <button onclick="closeModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <!-- Body: 2-column -->
+        <form id="task-form" onsubmit="submitCreateTask(event,${parentId || 'null'})" style="flex:1;overflow-y:auto;display:flex;min-height:0">
+
+          <!-- LEFT — content -->
+          <div class="flex-1 p-6 space-y-4 overflow-y-auto" style="min-width:0;border-right:1px solid #f1f5f9">
+            ${!parentId ? `
+            <button type="button" class="btn-secondary w-full justify-center text-sm" onclick="openTemplatePickerForTask()">
+              <i class="fa-solid fa-wand-magic-sparkles text-indigo-400"></i> Use Template
+            </button>` : ''}
+
+            <div>
+              <label class="label">Task Title <span class="text-red-500">*</span></label>
+              <input name="title" class="input text-base" placeholder="What needs to be done?" required />
+            </div>
+
+            <div>
+              <label class="label">Description</label>
+              <textarea name="description" class="input" rows="5" placeholder="Add details, steps, or context…"></textarea>
+            </div>
+
+            <div id="task-custom-fields-area"></div>
+
+            <div>
+              <label class="label" style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em">Attachments</label>
+              <label class="flex items-center gap-2.5 cursor-pointer border-2 border-dashed border-gray-200 rounded-xl p-3 hover:border-indigo-300 hover:bg-indigo-50 transition-all">
+                <i class="fa-solid fa-paperclip text-gray-400"></i>
+                <span id="modal-attach-label" class="text-sm text-gray-400 flex-1">Choose files…</span>
+                <input type="file" id="modal-attach-files" multiple class="hidden"
+                       onchange="updateAttachLabel(this,'modal-attach-label')" />
+              </label>
+            </div>
+
+            <div id="task-error" class="hidden p-3 bg-red-50 border border-red-100 text-red-600 text-sm rounded-xl">
+              <i class="fa-solid fa-circle-exclamation mr-1.5"></i><span></span>
+            </div>
+          </div>
+
+          <!-- RIGHT — metadata -->
+          <div class="p-5 space-y-4 overflow-y-auto shrink-0" style="width:216px;background:#f8fafc">
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-diagram-project mr-1 text-indigo-400"></i> Project <span class="text-red-500">*</span>
+              </label>
+              <select name="workflow_id" class="input text-sm" id="task-workflow-sel"
+                      onchange="loadStagesForTask(this.value,'')" required>
+                <option value="">Select project…</option>${wfOptions}
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-circle-dot mr-1 text-blue-400"></i> Stage
+              </label>
+              <select name="stage_id" class="input text-sm" id="task-stage-sel">
+                <option value="">No stage</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-flag mr-1 text-yellow-400"></i> Priority
+              </label>
+              <select name="priority" class="input text-sm">
+                <option value="high">🔴 High</option>
+                <option value="medium" selected>🟡 Medium</option>
+                <option value="low">🟢 Low</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-user mr-1 text-green-400"></i> Assignee
+              </label>
+              <select name="assignee_id" class="input text-sm">
+                <option value="">Unassigned</option>${userOptions}
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-calendar-day mr-1 text-red-400"></i> Due Date <span class="text-red-500">*</span>
+              </label>
+              <input name="due_date" type="date" class="input text-sm" required />
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-calendar-plus mr-1 text-gray-400"></i> Start Date
+              </label>
+              <input name="start_date" type="date" class="input text-sm" />
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-rotate mr-1 text-purple-400"></i> Recurrence
+              </label>
+              <select name="recurrence_rule" class="input text-sm" id="task-recurrence"
+                      onchange="document.getElementById('recurrence-end-wrap').style.display=this.value!=='none'?'block':'none'">
+                <option value="none">Does not repeat</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+            <div id="recurrence-end-wrap" style="display:none">
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">End Date</label>
+              <input name="recurrence_end_date" type="date" class="input text-sm" />
+            </div>
+
+            ${parentId ? `<input type="hidden" name="parent_task_id" value="${parentId}" />` : ''}
           </div>
         </form>
+
+        <!-- Footer -->
+        <div class="px-6 py-3.5 border-t border-gray-100 flex justify-end gap-3 shrink-0 bg-white">
+          <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+          <button type="submit" form="task-form" class="btn-primary">
+            <i class="fa-solid fa-plus"></i> Create Task
+          </button>
+        </div>
+
       </div>
     </div>`);
 
-  // Load stages for any pre-selected workflow
   const wfSel = document.getElementById('task-workflow-sel');
   if (wfSel?.value) loadStagesForTask(wfSel.value);
+
+  const titleInput  = document.querySelector('#task-form [name="title"]');
+  const dueDateInput = document.querySelector('#task-form [name="due_date"]');
+  if (titleInput)   setupFieldValidation(titleInput,   [_validators.required]);
+  if (dueDateInput) setupFieldValidation(dueDateInput, [_validators.required]);
 }
 
 async function submitCreateTask(e, parentId) {
   e.preventDefault();
+
+  // Validate required fields
+  const titleInput = document.querySelector('#task-form [name="title"]');
+  const dueDateInput = document.querySelector('#task-form [name="due_date"]');
+  const valid = validateForm([
+    ...(titleInput ? [{input: titleInput, rules: [_validators.required]}] : []),
+    ...(dueDateInput ? [{input: dueDateInput, rules: [_validators.required]}] : []),
+  ]);
+  if (!valid) return;
+
   const fd = new FormData(e.target);
   const data = Object.fromEntries(fd.entries());
   if (!data.assignee_id) delete data.assignee_id;
@@ -459,27 +670,41 @@ async function submitCreateTask(e, parentId) {
   const errEl = document.getElementById('task-error');
   errEl.classList.add('hidden');
   const fileInput = document.getElementById('modal-attach-files');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  if (submitBtn) setButtonLoading(submitBtn, true);
   try {
-    const task = await api.manager.createTask(data);
+    const resp = await api.manager.createTask(data);
+    const taskId = resp.data?.id || resp.id;
     closeModal();
-    await uploadFilesAfterCreate(task.id, fileInput, (id, fd) => api.manager.uploadAttachment(id, fd));
+    await uploadFilesAfterCreate(taskId, fileInput, (id, fd) => api.manager.uploadAttachment(id, fd));
     showToast('Task created!');
     if (parentId) {
       navigate('manager-task-detail', { id: parentId });
     } else {
-      navigate('manager-task-detail', { id: task.id });
+      navigate('manager-task-detail', { id: taskId });
     }
-  } catch (err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+    if (submitBtn) setButtonLoading(submitBtn, false);
+  }
 }
 
-async function deleteTask(id) {
-  if (!confirmDialog('Delete this task?')) return;
-  try {
-    await api.manager.deleteTask(id);
-    showToast('Task deleted!');
-    _allTasks = _allTasks.filter(t => t.id != id);
-    applyFilters();
-  } catch (err) { showToast(err.message, 'error'); }
+function deleteTask(id) {
+  showConfirm({
+    title: 'Delete task?',
+    message: 'This action cannot be undone.',
+    confirmLabel: 'Delete',
+    confirmClass: 'btn-danger',
+    onConfirm: async () => {
+      try {
+        await api.manager.deleteTask(id);
+        showToast('Task deleted!');
+        _allTasks = _allTasks.filter(t => t.id != id);
+        applyFilters();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+  });
 }
 
 // ── Drag-and-drop ─────────────────────────────────────────────────────────────
@@ -577,6 +802,91 @@ function clearBulkSelection() {
   document.querySelectorAll('.task-bulk-cb').forEach(cb => { cb.checked = false; });
   const bar = document.getElementById('bulk-action-bar');
   if (bar) bar.classList.add('hidden');
+}
+
+function toggleExportMenu() {
+  const m = document.getElementById('export-menu');
+  if (m) m.classList.toggle('hidden');
+  // Close when clicking outside
+  setTimeout(() => {
+    document.addEventListener('click', () => document.getElementById('export-menu')?.classList.add('hidden'), { once: true });
+  }, 0);
+}
+
+async function openTemplatePickerForTask() {
+  let templates = [];
+  try {
+    const result = await api.manager.listTaskTemplates();
+    templates = result.data || [];
+  } catch (err) { showToast(err.message, 'error'); return; }
+
+  if (!templates.length) { showToast('No task templates yet. Create one from Templates page.', 'info'); return; }
+
+  window._taskTemplates = templates;
+
+  // Render as a floating panel inside the modal — does NOT replace the modal
+  const existing = document.getElementById('template-picker-panel');
+  if (existing) { existing.remove(); return; }
+
+  const panel = document.createElement('div');
+  panel.id = 'template-picker-panel';
+  panel.style.cssText = 'position:absolute;top:56px;left:16px;right:16px;z-index:9999;background:#fff;border:1px solid #e0e7ff;border-radius:14px;box-shadow:0 8px 32px rgba(99,102,241,0.18);max-height:320px;overflow-y:auto';
+  panel.innerHTML = `
+    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100 sticky top-0 bg-white">
+      <span class="text-sm font-semibold text-gray-800"><i class="fa-solid fa-wand-magic-sparkles text-indigo-500 mr-2"></i>Choose a Template</span>
+      <button onclick="document.getElementById('template-picker-panel').remove()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="p-3 space-y-1.5">
+      ${templates.map(t => `
+        <div onclick="applyTaskTemplate(${t.id})"
+             class="p-3 rounded-xl border border-gray-100 cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition-all">
+          <div class="font-medium text-gray-800 text-sm">${taskEscHtml(t.name)}</div>
+          <div class="flex items-center gap-3 mt-1 text-xs text-gray-500">
+            ${priorityBadge(t.priority)}
+            ${t.checklist ? `<span><i class="fa-solid fa-check-square mr-0.5"></i>${JSON.parse(t.checklist||'[]').length} items</span>` : ''}
+            ${t.estimated_minutes ? `<span><i class="fa-solid fa-clock mr-0.5"></i>${Math.round(t.estimated_minutes/60*10)/10}h</span>` : ''}
+          </div>
+        </div>`).join('')}
+    </div>`;
+
+  // Attach to the modal-box so it's positioned relative to it
+  const modalBox = document.querySelector('.modal-box');
+  if (modalBox) { modalBox.style.position = 'relative'; modalBox.appendChild(panel); }
+}
+
+function applyTaskTemplate(templateId) {
+  const tpl = (window._taskTemplates || []).find(t => t.id == templateId);
+  if (!tpl) return;
+
+  document.getElementById('template-picker-panel')?.remove();
+
+  const form = document.getElementById('task-form');
+  if (!form) return;
+
+  const titleEl = form.querySelector('[name=title]');
+  const descEl  = form.querySelector('[name=description]');
+  const prioEl  = form.querySelector('[name=priority]');
+  if (titleEl) titleEl.value = tpl.title_template || '';
+  if (descEl)  descEl.value  = tpl.description    || '';
+  if (prioEl)  prioEl.value  = tpl.priority        || 'medium';
+
+  // Pre-populate checklist area if template has checklist items
+  const checklist = JSON.parse(tpl.checklist || '[]');
+  if (checklist.length) {
+    let cfArea = document.getElementById('task-custom-fields-area');
+    if (cfArea) {
+      const existingChecklist = cfArea.querySelector('#tpl-checklist-preview');
+      if (existingChecklist) existingChecklist.remove();
+      const preview = document.createElement('div');
+      preview.id = 'tpl-checklist-preview';
+      preview.className = 'p-3 bg-indigo-50 rounded-xl border border-indigo-100';
+      preview.innerHTML = `<p class="text-xs font-semibold text-indigo-600 mb-2"><i class="fa-solid fa-list-check mr-1"></i> Checklist from template</p>` +
+        checklist.map(item => `<p class="text-xs text-gray-600 flex items-center gap-1.5 mb-1"><i class="fa-regular fa-square text-gray-400"></i>${taskEscHtml(item)}</p>`).join('');
+      cfArea.prepend(preview);
+    }
+  }
+
+  showToast('Template applied!', 'success');
 }
 
 async function bulkChangeStage() {

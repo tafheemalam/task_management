@@ -22,6 +22,16 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" />
   <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
   <style type="text/tailwindcss">
+    /* Skeleton shimmer */
+    @keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+    .skeleton { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 800px 100%; animation: shimmer 1.4s infinite; border-radius: 6px; }
+    .skeleton-text { height: 14px; margin-bottom: 8px; }
+    .skeleton-text.w-3\/4 { width: 75%; }
+    .skeleton-text.w-1\/2 { width: 50%; }
+    .skeleton-title { height: 20px; margin-bottom: 12px; }
+    .skeleton-avatar { width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; }
+    .skeleton-badge { height: 20px; width: 60px; border-radius: 20px; }
+    .skeleton-btn { height: 36px; width: 100px; border-radius: 10px; }
     /* Micro-animations */
     @keyframes fadeInUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
     @keyframes slideInRight { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
@@ -72,29 +82,50 @@
     .cal-task-tip::after { content: ''; position: absolute; top: 100%; left: 10px;
                            border: 5px solid transparent; border-top-color: #1e293b; }
     .cal-task:hover .cal-task-tip { display: block; }
+    .mention-chip { background:#eef2ff;color:#6366f1;font-weight:600;padding:1px 5px;border-radius:4px;font-size:0.875em; }
+    :root { --brand-primary: #6366f1; --brand-secondary: #3b82f6; }
+    @media print {
+      aside, #modal-root, .btn-primary, .btn-secondary, .btn-danger,
+      [onclick="openCommandPalette()"], #bulk-action-bar { display: none !important; }
+      .ml-60 { margin-left: 0 !important; }
+      body { background: white !important; }
+      .no-print { display: none !important; }
+      .print-break { page-break-after: always; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #e2e8f0; padding: 8px 12px; font-size: 12px; }
+      .task-card { box-shadow: none !important; border: 1px solid #e2e8f0 !important; }
+    }
   </style>
 </head>
 <body>
   <div id="app"></div>
-  <script src="/assets/js/api.js?v=20"></script>
-  <script src="/assets/js/utils.js?v=20"></script>
-  <script src="/assets/js/pages/login.js?v=20"></script>
-  <script src="/assets/js/pages/subscribe.js?v=20"></script>
-  <script src="/assets/js/pages/admin/dashboard.js?v=20"></script>
-  <script src="/assets/js/pages/admin/companies.js?v=20"></script>
-  <script src="/assets/js/pages/admin/packages.js?v=20"></script>
-  <script src="/assets/js/pages/admin/tokens.js?v=20"></script>
-  <script src="/assets/js/pages/admin/managers.js?v=20"></script>
-  <script src="/assets/js/pages/admin/subscription-requests.js?v=20"></script>
-  <script src="/assets/js/pages/manager/dashboard.js?v=20"></script>
-  <script src="/assets/js/pages/manager/users.js?v=20"></script>
-  <script src="/assets/js/pages/manager/workflows.js?v=20"></script>
-  <script src="/assets/js/pages/manager/tasks.js?v=20"></script>
-  <script src="/assets/js/pages/manager/task-detail.js?v=20"></script>
-  <script src="/assets/js/pages/employee/dashboard.js?v=20"></script>
-  <script src="/assets/js/pages/employee/task-detail.js?v=20"></script>
-  <script src="/assets/js/pages/manager/gantt.js?v=20"></script>
-  <script src="/assets/js/pages/shared/calendar.js?v=20"></script>
-  <script src="/assets/js/app.js?v=20"></script>
+  <script src="/assets/js/api.js?v=27"></script>
+  <script src="/assets/js/utils.js?v=27"></script>
+  <script src="/assets/js/pages/login.js?v=27"></script>
+  <script src="/assets/js/pages/subscribe.js?v=27"></script>
+  <script src="/assets/js/pages/admin/dashboard.js?v=27"></script>
+  <script src="/assets/js/pages/admin/companies.js?v=27"></script>
+  <script src="/assets/js/pages/admin/packages.js?v=27"></script>
+  <script src="/assets/js/pages/admin/tokens.js?v=27"></script>
+  <script src="/assets/js/pages/admin/managers.js?v=27"></script>
+  <script src="/assets/js/pages/admin/subscription-requests.js?v=27"></script>
+  <script src="/assets/js/pages/manager/dashboard.js?v=27"></script>
+  <script src="/assets/js/pages/manager/users.js?v=27"></script>
+  <script src="/assets/js/pages/manager/workflows.js?v=27"></script>
+  <script src="/assets/js/pages/manager/tasks.js?v=27d"></script>
+  <script src="/assets/js/pages/manager/task-detail.js?v=27"></script>
+  <script src="/assets/js/pages/employee/dashboard.js?v=27"></script>
+  <script src="/assets/js/pages/employee/task-detail.js?v=27"></script>
+  <script src="/assets/js/pages/manager/gantt.js?v=27"></script>
+  <script src="/assets/js/pages/shared/calendar.js?v=27"></script>
+  <script src="/assets/js/pages/manager/time-report.js?v=27"></script>
+  <script src="/assets/js/pages/manager/webhooks.js?v=27"></script>
+  <script src="/assets/js/pages/shared/profile.js?v=27"></script>
+  <script src="/assets/js/pages/admin/branding.js?v=27"></script>
+  <script src="/assets/js/pages/manager/api-keys.js?v=27"></script>
+  <script src="/assets/js/pages/manager/custom-fields.js?v=27"></script>
+  <script src="/assets/js/pages/manager/workload.js?v=27"></script>
+  <script src="/assets/js/pages/manager/task-templates.js?v=27"></script>
+  <script src="/assets/js/app.js?v=27"></script>
 </body>
 </html>

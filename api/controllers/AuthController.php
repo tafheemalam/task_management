@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../config/Database.php';
 require_once __DIR__ . '/../middleware/Auth.php';
+require_once __DIR__ . '/../services/TotpService.php';
 
 class AuthController {
     public function login(): void {
@@ -25,6 +26,13 @@ class AuthController {
             return;
         }
 
+        // Check 2FA
+        if (!empty($user['totp_enabled'])) {
+            $tempToken = Auth::generateTempToken($user['id']);
+            echo json_encode(['status' => '2fa_required', 'temp_token' => $tempToken]);
+            return;
+        }
+
         $token = Auth::generateToken([
             'id' => $user['id'],
             'email' => $user['email'],
@@ -34,7 +42,54 @@ class AuthController {
         ]);
 
         unset($user['password']);
-        echo json_encode(['token' => $token, 'user' => $user]);
+        echo json_encode(['status' => 'ok', 'token' => $token, 'user' => $user]);
+    }
+
+    public function verify2FA(): void {
+        $body = json_decode(file_get_contents('php://input'), true);
+        $tempToken = $body['temp_token'] ?? '';
+        $code      = trim($body['code'] ?? '');
+
+        if (!$tempToken || !$code) {
+            http_response_code(400);
+            echo json_encode(['error' => 'temp_token and code are required']);
+            return;
+        }
+
+        $payload = Auth::verifyTempToken($tempToken);
+        if (!$payload || ($payload['type'] ?? '') !== '2fa_pending') {
+            http_response_code(401);
+            echo json_encode(['error' => 'Invalid or expired session. Please log in again.']);
+            return;
+        }
+
+        $db = Database::getInstance();
+        $stmt = $db->prepare('SELECT u.*, c.name as company_name FROM users u LEFT JOIN companies c ON u.company_id = c.id WHERE u.id = ? AND u.is_active = 1');
+        $stmt->execute([$payload['sub']]);
+        $user = $stmt->fetch();
+
+        if (!$user) {
+            http_response_code(401);
+            echo json_encode(['error' => 'User not found']);
+            return;
+        }
+
+        if (!TotpService::verify($user['totp_secret'] ?? '', $code)) {
+            http_response_code(401);
+            echo json_encode(['error' => 'Invalid authenticator code']);
+            return;
+        }
+
+        $token = Auth::generateToken([
+            'id'         => $user['id'],
+            'email'      => $user['email'],
+            'role'       => $user['role'],
+            'company_id' => $user['company_id'],
+            'name'       => $user['name'],
+        ]);
+
+        unset($user['password']);
+        echo json_encode(['status' => 'ok', 'token' => $token, 'user' => $user]);
     }
 
     public function me(): void {

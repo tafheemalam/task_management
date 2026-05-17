@@ -43,6 +43,141 @@ $tables = [
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
     )",
+    'task_dependencies' => "CREATE TABLE IF NOT EXISTS task_dependencies (
+        task_id INT NOT NULL,
+        depends_on_id INT NOT NULL,
+        PRIMARY KEY (task_id, depends_on_id),
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        FOREIGN KEY (depends_on_id) REFERENCES tasks(id) ON DELETE CASCADE
+    )",
+    'packages_max_projects' => "ALTER TABLE packages ADD COLUMN IF NOT EXISTS max_projects INT NOT NULL DEFAULT 10",
+    'time_logs' => "CREATE TABLE IF NOT EXISTS time_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        task_id INT NOT NULL,
+        user_id INT NOT NULL,
+        description VARCHAR(255),
+        minutes INT NOT NULL DEFAULT 0,
+        logged_date DATE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )",
+    'tasks_estimated_minutes' => "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS estimated_minutes INT NULL DEFAULT NULL",
+    'webhooks' => "CREATE TABLE IF NOT EXISTS webhooks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        url VARCHAR(500) NOT NULL,
+        secret VARCHAR(100) NOT NULL,
+        events JSON NOT NULL DEFAULT ('[]'),
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        last_triggered_at TIMESTAMP NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+    )",
+
+    // ── Step 3: Enterprise features ───────────────────────────────────────────
+
+    // Feature 1: 2FA (TOTP)
+    'users_totp_secret'  => "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(64) NULL",
+    'users_totp_enabled' => "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled TINYINT(1) NOT NULL DEFAULT 0",
+
+    // Feature 2: White-Label Branding
+    'company_settings' => "CREATE TABLE IF NOT EXISTS company_settings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT NOT NULL UNIQUE,
+        logo_url VARCHAR(500) NULL,
+        primary_color VARCHAR(7) NOT NULL DEFAULT '#6366f1',
+        secondary_color VARCHAR(7) NOT NULL DEFAULT '#3b82f6',
+        company_display_name VARCHAR(100) NULL,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+    )",
+
+    // Feature 3: Public REST API Keys
+    'api_keys' => "CREATE TABLE IF NOT EXISTS api_keys (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT NOT NULL,
+        user_id INT NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        key_hash VARCHAR(64) NOT NULL,
+        key_prefix VARCHAR(12) NOT NULL,
+        permissions JSON NULL,
+        last_used_at TIMESTAMP NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )",
+
+    // Feature 4: Custom Fields
+    'custom_fields' => "CREATE TABLE IF NOT EXISTS custom_fields (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        workflow_id INT NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        field_type ENUM('text','number','date','select','checkbox') NOT NULL DEFAULT 'text',
+        options JSON NULL,
+        is_required TINYINT(1) NOT NULL DEFAULT 0,
+        sort_order INT NOT NULL DEFAULT 0,
+        FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
+    )",
+    'task_custom_values' => "CREATE TABLE IF NOT EXISTS task_custom_values (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        task_id INT NOT NULL,
+        field_id INT NOT NULL,
+        value TEXT NULL,
+        UNIQUE KEY uq_task_field (task_id, field_id),
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        FOREIGN KEY (field_id) REFERENCES custom_fields(id) ON DELETE CASCADE
+    )",
+
+    // ── Step 4: Productivity features ────────────────────────────────────────────
+
+    // Feature 1: Sub-tasks / Checklists
+    'checklist_subtasks' => "CREATE TABLE IF NOT EXISTS subtasks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        task_id INT NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        is_done TINYINT(1) NOT NULL DEFAULT 0,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    )",
+
+    // Feature 3: Recurring Tasks
+    'tasks_recurrence_rule' => "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recurrence_rule ENUM('none','daily','weekly','monthly') NOT NULL DEFAULT 'none'",
+    'tasks_recurrence_end_date' => "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recurrence_end_date DATE NULL",
+
+    // Feature 4: Task Templates
+    'task_templates' => "CREATE TABLE IF NOT EXISTS task_templates (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT NOT NULL,
+        workflow_id INT NULL,
+        name VARCHAR(100) NOT NULL,
+        title_template VARCHAR(255) NOT NULL,
+        description TEXT NULL,
+        priority ENUM('low','medium','high') NOT NULL DEFAULT 'medium',
+        estimated_minutes INT NULL,
+        checklist JSON NULL,
+        created_by INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+        FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE SET NULL,
+        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+    )",
+
+    // Feature 5: Project Templates
+    'project_templates' => "CREATE TABLE IF NOT EXISTS project_templates (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        description TEXT NULL,
+        stages JSON NOT NULL DEFAULT ('[]'),
+        custom_fields JSON NOT NULL DEFAULT ('[]'),
+        created_by INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+    )",
 ];
 
 foreach ($tables as $name => $sql) {

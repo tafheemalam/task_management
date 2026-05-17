@@ -252,13 +252,7 @@ async function renderManagerDashboard() {
       </div>
 
       <!-- KPI cards -->
-      <div id="mgr-kpis" class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        ${[1,2,3,4].map(() => `
-          <div class="bg-white rounded-xl shadow-sm p-5 animate-pulse border-l-4 border-gray-200">
-            <div class="h-3 bg-gray-200 rounded w-2/3 mb-4"></div>
-            <div class="h-7 bg-gray-200 rounded w-1/2"></div>
-          </div>`).join('')}
-      </div>
+      <div id="mgr-kpis">${skeletonStatCards(4)}</div>
 
       <!-- Project progress — full width -->
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -359,12 +353,12 @@ async function renderManagerDashboard() {
                                               .reduce((n, s) => n + (+s.count || 0), 0);
     const pct    = total > 0 ? Math.round(done / total * 100) : 0;
 
-    document.getElementById('mgr-kpis').innerHTML = [
+    document.getElementById('mgr-kpis').innerHTML = `<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">${[
       _mKpi('fa-users',          sysStats.total_users,     'Team Members',    '#3b82f6', '#eff6ff'),
       _mKpi('fa-list-check',     total,                    'Total Tasks',     '#10b981', '#f0fdf4', `${pct}% done`),
       _mKpi('fa-diagram-project',sysStats.total_workflows, 'Projects',        '#8b5cf6', '#f5f3ff'),
       _mKpi('fa-clock',          sysStats.overdue_tasks,   'Overdue',         '#ef4444', '#fef2f2', 'Need attention'),
-    ].join('');
+    ].join('')}</div>`;
 
     // Draw charts
     requestAnimationFrame(() => {

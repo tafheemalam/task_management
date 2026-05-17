@@ -1,8 +1,16 @@
 async function renderManagerWorkflows() {
   document.getElementById('app').innerHTML = renderLayout('manager', `
     <div class="p-6">
-      ${pageHeader('Projects', 'Manage your company projects and team members', `<button class="btn-primary" onclick="openCreateWorkflowModal()"><i class="fa-solid fa-plus"></i> New Project</button>`)}
-      <div id="workflows-container">Loading...</div>
+      ${pageHeader('Projects', 'Manage your company projects and team members', `
+        <div class="flex items-center gap-2">
+          <button class="btn-secondary" onclick="openNewProjectFromTemplateModal()">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> New from Template
+          </button>
+          <button class="btn-primary" onclick="openCreateWorkflowModal()">
+            <i class="fa-solid fa-plus"></i> New Project
+          </button>
+        </div>`)}
+      <div id="workflows-container">${skeletonCards(3)}</div>
     </div>`);
   await loadWorkflows();
 }
@@ -18,7 +26,7 @@ async function loadWorkflows() {
 
 function renderWorkflows() {
   const el = document.getElementById('workflows-container');
-  if (!_workflows.length) { el.innerHTML = emptyState('fa-diagram-project', 'No projects yet', 'Create a project to start organizing tasks'); return; }
+  if (!_workflows.length) { el.innerHTML = emptyState('fa-diagram-project', 'No projects yet', 'Create your first project to get started', `<button class="btn-primary" onclick="openCreateWorkflowModal()"><i class="fa-solid fa-plus"></i> New Project</button>`); return; }
   el.innerHTML = `<div class="grid grid-cols-1 lg:grid-cols-2 gap-5">${_workflows.map(wf => wfCard(wf)).join('')}</div>`;
 }
 
@@ -59,7 +67,10 @@ function wfCard(wf) {
               </div>
             </div>
           </div>
-          <div class="flex items-center gap-1.5 shrink-0">
+          <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
+            <button class="btn-secondary text-xs" onclick="saveWorkflowAsTemplate(${wf.id}, '${escHtml(wf.name).replace(/'/g, "\\'")}')">
+              <i class="fa-solid fa-floppy-disk"></i> Save Template
+            </button>
             <button class="btn-secondary text-xs" onclick="openEditWorkflowModal(${wf.id})">
               <i class="fa-solid fa-pen"></i> Edit
             </button>
@@ -179,21 +190,35 @@ function openCreateWorkflowModal() {
         </form>
       </div>
     </div>`);
+  setTimeout(() => _setupWorkflowFormValidation('wf-form'), 50);
+}
+
+function _setupWorkflowFormValidation(formId) {
+  const nameInput = document.querySelector(`#${formId} [name="wf_name"]`);
+  if (nameInput) setupFieldValidation(nameInput, [_validators.required]);
 }
 
 async function submitCreateWorkflow(e) {
   e.preventDefault();
-  const name = e.target.querySelector('[name=wf_name]').value;
+  const nameInput = e.target.querySelector('[name=wf_name]');
+  if (!validateForm([{input: nameInput, rules: [_validators.required]}])) return;
+  const name = nameInput.value;
   const stages = collectStages();
   if (!stages.length) { document.getElementById('wf-error').textContent = 'Add at least one stage'; document.getElementById('wf-error').classList.remove('hidden'); return; }
   const errEl = document.getElementById('wf-error');
   errEl.classList.add('hidden');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  if (submitBtn) setButtonLoading(submitBtn, true);
   try {
     await api.manager.createWorkflow({ name, stages });
     showToast('Project created!');
     closeModal();
     await loadWorkflows();
-  } catch (err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+    if (submitBtn) setButtonLoading(submitBtn, false);
+  }
 }
 
 function openEditWorkflowModal(id) {
@@ -244,14 +269,21 @@ async function submitEditWorkflow(e, id) {
   } catch (err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
 }
 
-async function deleteWorkflow(id) {
+function deleteWorkflow(id) {
   const wf = _workflows.find(x => x.id == id);
-  if (!confirmDialog(`Delete project "${wf?.name}"? This cannot be undone.`)) return;
-  try {
-    await api.manager.deleteWorkflow(id);
-    showToast('Project deleted!');
-    await loadWorkflows();
-  } catch (err) { showToast(err.message, 'error'); }
+  showConfirm({
+    title: `Delete project?`,
+    message: `"${wf?.name}" will be permanently deleted. This cannot be undone.`,
+    confirmLabel: 'Delete',
+    confirmClass: 'btn-danger',
+    onConfirm: async () => {
+      try {
+        await api.manager.deleteWorkflow(id);
+        showToast('Project deleted!');
+        await loadWorkflows();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+  });
 }
 
 // ── Member management ─────────────────────────────────────────────────────────
@@ -377,6 +409,106 @@ function filterMemberList(q) {
     const text = label.textContent.toLowerCase();
     label.style.display = text.includes(term) ? '' : 'none';
   });
+}
+
+function saveWorkflowAsTemplate(wfId, wfName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'save-tpl-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-box max-w-sm animate-fade-in-up" style="padding:28px">
+      <h3 class="font-semibold text-gray-900 mb-1">Save as Template</h3>
+      <p class="text-sm text-gray-500 mb-4">Enter a name for this project template.</p>
+      <input id="save-tpl-name" type="text" class="input mb-4" value="Template: ${escHtml(wfName)}" placeholder="Template name" />
+      <div class="flex gap-2 justify-end">
+        <button class="btn-secondary" onclick="document.getElementById('save-tpl-overlay').remove()">Cancel</button>
+        <button class="btn-primary" onclick="confirmSaveWorkflowTemplate(${wfId})"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => { const inp = document.getElementById('save-tpl-name'); if (inp) { inp.focus(); inp.select(); } }, 50);
+}
+
+async function confirmSaveWorkflowTemplate(wfId) {
+  const name = document.getElementById('save-tpl-name')?.value.trim();
+  if (!name) { showToast('Please enter a template name', 'error'); return; }
+  document.getElementById('save-tpl-overlay')?.remove();
+  try {
+    await api.manager.saveProjectAsTemplate(wfId, { template_name: name });
+    showToast('Project saved as template!', 'success');
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function openNewProjectFromTemplateModal() {
+  let templates = [];
+  try {
+    const result = await api.manager.listProjectTemplates();
+    templates = result.data || [];
+  } catch (err) { showToast(err.message, 'error'); return; }
+
+  if (!templates.length) {
+    showToast('No project templates yet. Save a project as a template first.', 'info');
+    return;
+  }
+
+  openModal(`
+    <div class="modal-overlay">
+      <div class="modal-box max-w-lg">
+        <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+          <h3 class="font-semibold text-gray-900"><i class="fa-solid fa-wand-magic-sparkles text-indigo-500 mr-2"></i>New Project from Template</h3>
+          <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="p-5 space-y-4">
+          <div>
+            <label class="label">Choose Template</label>
+            <div class="space-y-2 max-h-48 overflow-y-auto" id="proj-tpl-list">
+              ${templates.map(t => `
+                <label class="flex items-center gap-3 p-3 rounded-xl border cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition-all">
+                  <input type="radio" name="proj_tpl" value="${t.id}" class="accent-indigo-600" />
+                  <div>
+                    <div class="font-medium text-sm text-gray-800">${escHtml(t.name)}</div>
+                    <div class="text-xs text-gray-500 mt-0.5">
+                      ${JSON.parse(t.stages||'[]').length} stages &middot;
+                      ${JSON.parse(t.custom_fields||'[]').length} custom fields
+                    </div>
+                  </div>
+                </label>`).join('')}
+            </div>
+          </div>
+          <div>
+            <label class="label">New Project Name <span class="text-red-500">*</span></label>
+            <input id="proj-from-tpl-name" type="text" class="input" placeholder="Enter project name" required />
+          </div>
+          <div>
+            <label class="label">Description (optional)</label>
+            <textarea id="proj-from-tpl-desc" class="input" rows="2" placeholder="Project description…"></textarea>
+          </div>
+          <div id="proj-tpl-error" class="hidden p-3 bg-red-50 text-red-600 text-sm rounded-lg"></div>
+          <div class="flex justify-end gap-3">
+            <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+            <button class="btn-primary" onclick="submitCreateProjectFromTemplate()">
+              <i class="fa-solid fa-plus"></i> Create Project
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`);
+}
+
+async function submitCreateProjectFromTemplate() {
+  const tplId = document.querySelector('[name=proj_tpl]:checked')?.value;
+  const name  = document.getElementById('proj-from-tpl-name')?.value.trim();
+  const desc  = document.getElementById('proj-from-tpl-desc')?.value.trim();
+  const errEl = document.getElementById('proj-tpl-error');
+  errEl.classList.add('hidden');
+  if (!tplId) { errEl.textContent = 'Please select a template'; errEl.classList.remove('hidden'); return; }
+  if (!name)  { errEl.textContent = 'Project name is required'; errEl.classList.remove('hidden'); return; }
+  try {
+    await api.manager.createProjectFromTemplate(tplId, { name, description: desc });
+    showToast('Project created from template!', 'success');
+    closeModal();
+    await loadWorkflows();
+  } catch (err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
 }
 
 async function saveMemberChanges(wfId) {

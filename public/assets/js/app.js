@@ -19,14 +19,28 @@ const routes = {
   'manager-workflows': () => renderManagerWorkflows(),
   'manager-tasks': () => renderManagerTasks(),
   'manager-task-detail': (p) => renderManagerTaskDetail(p),
-  'manager-gantt':    () => renderManagerGantt(),
-  'manager-calendar': () => renderCalendar('manager'),
+  'manager-gantt':        () => renderManagerGantt(),
+  'manager-calendar':     () => renderCalendar('manager'),
+  'manager-time-report':  () => renderTimeReport(),
+  'manager-webhooks':     () => renderManagerWebhooks(),
 
   // Employee
   'employee-dashboard': () => renderEmployeeDashboard(),
   'employee-tasks': (p) => renderEmployeeTasks(p),
   'employee-task-detail': (p) => renderEmployeeTaskDetail(p),
   'employee-calendar': () => renderCalendar('employee'),
+
+  // Shared
+  'shared-profile': () => renderProfile(),
+
+  // Admin enterprise
+  'admin-branding': () => renderBranding(),
+
+  // Manager enterprise
+  'manager-workload': () => renderWorkload(),
+  'manager-api-keys': () => renderApiKeys(),
+  'manager-custom-fields': () => renderCustomFields(),
+  'manager-templates': () => renderTemplates(),
 };
 
 function roleHome(role) {

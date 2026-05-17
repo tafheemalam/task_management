@@ -215,3 +215,39 @@ CREATE TABLE IF NOT EXISTS notifications (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
 );
+
+ALTER TABLE packages ADD COLUMN IF NOT EXISTS max_projects INT NOT NULL DEFAULT 10;
+CREATE TABLE IF NOT EXISTS task_dependencies (
+    task_id INT NOT NULL,
+    depends_on_id INT NOT NULL,
+    PRIMARY KEY (task_id, depends_on_id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (depends_on_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS estimated_minutes INT NULL DEFAULT NULL;
+
+CREATE TABLE IF NOT EXISTS time_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    task_id INT NOT NULL,
+    user_id INT NOT NULL,
+    description VARCHAR(255),
+    minutes INT NOT NULL DEFAULT 0,
+    logged_date DATE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS webhooks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    url VARCHAR(500) NOT NULL,
+    secret VARCHAR(100) NOT NULL,
+    events JSON NOT NULL DEFAULT ('[]'),
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    last_triggered_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+);

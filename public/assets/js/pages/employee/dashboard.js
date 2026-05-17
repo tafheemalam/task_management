@@ -13,9 +13,7 @@ async function renderEmployeeDashboard() {
     <div class="p-6 space-y-6">
       ${pageHeader(`Hello, ${state.user?.name || 'there'}!`, "Here's what's on your plate")}
 
-      <div id="emp-stats" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        ${[1,2,3].map(() => '<div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 animate-pulse h-24"></div>').join('')}
-      </div>
+      <div id="emp-stats">${skeletonStatCards(3)}</div>
 
       <div id="emp-alerts"></div>
 
@@ -29,7 +27,7 @@ async function renderEmployeeDashboard() {
           </button>
         </div>
         <div id="emp-project-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          ${[1,2].map(() => '<div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 animate-pulse h-24"></div>').join('')}
+          ${skeletonCards(2)}
         </div>
       </div>
 
@@ -44,7 +42,7 @@ async function renderEmployeeDashboard() {
                </button>`
             : ''}
         </div>
-        <div id="emp-tasks">Loading...</div>
+        <div id="emp-tasks">${skeletonCards(4)}</div>
       </div>
     </div>`);
 
@@ -55,11 +53,11 @@ async function renderEmployeeDashboard() {
       api.employee.listTasks(),
     ]);
 
-    document.getElementById('emp-stats').innerHTML = [
+    document.getElementById('emp-stats').innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">${[
       statCard('fa-list-check',   stats.my_tasks, 'My Tasks',  'blue'),
       statCard('fa-circle-check', stats.done,     'Completed', 'green'),
       statCard('fa-clock',        stats.overdue,  'Overdue',   'red'),
-    ].join('');
+    ].join('')}</div>`;
 
     // Build project cards from ALL project tasks (not just assigned)
     const projectMap = new Map();
@@ -168,7 +166,7 @@ async function renderEmployeeDashboard() {
             </div>
             <i class="fa-solid fa-chevron-right text-gray-300 group-hover:text-gray-500 text-xs flex-shrink-0"></i>
           </div>`).join('')
-      : emptyState('fa-inbox', 'No assigned tasks yet', 'Your manager will assign tasks to you');
+      : emptyState('fa-circle-check', 'No tasks assigned', 'You have no tasks yet — enjoy the quiet!');
 
   } catch (err) { showToast(err.message, 'error'); }
 }
@@ -486,26 +484,33 @@ function _renderEmpBoard(tasks) {
   viewEl.innerHTML = `<div class="flex gap-4 overflow-x-auto pb-4">${colHtml}${noneHtml}</div>`;
 }
 
+const _EMP_CARD_PALETTE = [
+  '#f97316', '#6366f1', '#10b981', '#8b5cf6',
+  '#0ea5e9', '#ec4899', '#14b8a6', '#f59e0b',
+];
+
 function _empTaskCard(t) {
   const locked = ['Done', 'Closed'].includes(t.stage_name);
   const od     = isOverdue(t.due_date) && !locked;
   const drag   = locked ? '' : `draggable="true" ondragstart="empDragStart(event,${t.id})" ondragend="empDragEnd(event)"`;
+  const accent = _EMP_CARD_PALETTE[t.id % _EMP_CARD_PALETTE.length];
 
   return `
     <div class="task-card select-none ${locked ? 'cursor-default opacity-70' : ''}"
+         style="border-left:4px solid ${accent}"
          ${drag}
          data-task-id="${t.id}"
          onclick="navigate('employee-task-detail',{id:${t.id}})">
       <div class="flex items-start gap-2 mb-1.5">
-        <div class="text-sm font-medium text-gray-800 line-clamp-2 flex-1">${t.title}</div>
+        <div class="text-sm font-semibold text-gray-800 line-clamp-2 flex-1">${t.title}</div>
         ${locked ? '<i class="fa-solid fa-lock text-green-400 text-xs flex-shrink-0 mt-0.5"></i>' : ''}
       </div>
       <div class="flex items-center gap-1.5 mb-2">${priorityBadge(t.priority)}</div>
-      <div class="flex items-center justify-between text-xs">
-        <span class="text-gray-400 truncate max-w-[130px]">${t.assignee_name || 'Unassigned'}</span>
+      <div class="flex items-center justify-between text-xs pt-1.5" style="border-top:1px solid #f1f5f9">
+        <span class="text-gray-500 truncate max-w-[130px]">${t.assignee_name || 'Unassigned'}</span>
         ${t.due_date ? `<span class="${od ? 'text-red-500 font-medium' : 'text-gray-400'}">${formatDate(t.due_date)}</span>` : ''}
       </div>
-      ${t.subtask_count > 0 ? `<div class="mt-1.5 text-xs text-gray-400"><i class="fa-solid fa-bars-staggered mr-1"></i>${t.subtask_count}</div>` : ''}
+      ${t.subtask_count > 0 ? `<div class="mt-1.5 text-[11px] text-gray-400 flex items-center gap-1"><i class="fa-solid fa-bars-staggered"></i>${t.subtask_count} subtask${t.subtask_count > 1 ? 's' : ''}</div>` : ''}
     </div>`;
 }
 

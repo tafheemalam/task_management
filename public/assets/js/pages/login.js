@@ -12,8 +12,8 @@ function renderLogin() {
           <p class="text-gray-400 text-sm mt-1">Project Management Platform</p>
         </div>
 
-        <!-- Card -->
-        <div class="bg-white rounded-2xl shadow-lg border border-gray-100 p-8">
+        <!-- Login Card -->
+        <div id="login-card" class="bg-white rounded-2xl shadow-lg border border-gray-100 p-8">
           <h2 class="text-lg font-bold text-gray-900 mb-6">Welcome back</h2>
 
           <form id="login-form" onsubmit="handleLogin(event)">
@@ -62,9 +62,53 @@ function renderLogin() {
           </div>
         </div>
 
+        <!-- 2FA Card (hidden by default) -->
+        <div id="twofa-card" class="hidden bg-white rounded-2xl shadow-lg border border-gray-100 p-8">
+          <div class="text-center mb-6">
+            <div class="inline-flex items-center justify-center w-12 h-12 rounded-2xl mb-3 bg-indigo-50">
+              <i class="fa-solid fa-shield-halved text-indigo-600 text-2xl"></i>
+            </div>
+            <h2 class="text-lg font-bold text-gray-900">Two-Factor Authentication</h2>
+            <p class="text-sm text-gray-500 mt-1">Check your authenticator app for the 6-digit code</p>
+          </div>
+
+          <div class="mb-5">
+            <label class="label" for="totp-code">Authenticator Code</label>
+            <input id="totp-code" type="number" class="input text-center text-2xl tracking-widest font-mono"
+                   placeholder="000000" maxlength="6"
+                   oninput="if(this.value.length>6)this.value=this.value.slice(0,6)"
+                   onkeydown="if(event.key==='Enter')verify2FA()" />
+          </div>
+
+          <div id="twofa-error" class="hidden mb-4 p-3 bg-red-50 border border-red-100 text-red-600 text-sm rounded-xl flex items-center gap-2">
+            <i class="fa-solid fa-circle-exclamation shrink-0"></i>
+            <span id="twofa-error-text"></span>
+          </div>
+
+          <button id="twofa-btn" onclick="verify2FA()"
+                  class="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold text-white transition-colors disabled:opacity-50 shadow-sm"
+                  style="background:linear-gradient(135deg,#6366f1,#3b82f6)">
+            <i class="fa-solid fa-check-circle"></i> Verify Code
+          </button>
+
+          <button onclick="cancelTwoFA()" class="w-full mt-3 text-sm text-gray-400 hover:text-gray-600 transition-colors">
+            Back to login
+          </button>
+        </div>
+
       </div>
     </div>`;
+
+  // Set up inline validation after DOM is ready
+  setTimeout(() => {
+    const emailInp = document.getElementById('email');
+    const passInp  = document.getElementById('password');
+    if (emailInp) setupFieldValidation(emailInp, [_validators.required, _validators.email]);
+    if (passInp)  setupFieldValidation(passInp,  [_validators.required]);
+  }, 50);
 }
+
+let _2faTempToken = null;
 
 async function handleLogin(e) {
   e.preventDefault();
@@ -80,6 +124,15 @@ async function handleLogin(e) {
 
   try {
     const data = await api.auth.login(email, password);
+
+    if (data.status === '2fa_required') {
+      _2faTempToken = data.temp_token;
+      document.getElementById('login-card').classList.add('hidden');
+      document.getElementById('twofa-card').classList.remove('hidden');
+      setTimeout(() => document.getElementById('totp-code')?.focus(), 100);
+      return;
+    }
+
     api.setToken(data.token);
     state.user = data.user;
     navigate(roleHome(data.user.role));
@@ -90,6 +143,41 @@ async function handleLogin(e) {
     btn.disabled = false;
     btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Sign In';
   }
+}
+
+async function verify2FA() {
+  const btn      = document.getElementById('twofa-btn');
+  const errEl    = document.getElementById('twofa-error');
+  const errText  = document.getElementById('twofa-error-text');
+  const codeEl   = document.getElementById('totp-code');
+  const code     = String(codeEl.value).padStart(6, '0');
+
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verifying…';
+  errEl.classList.add('hidden');
+
+  try {
+    const data = await api.auth.verify2FA(_2faTempToken, code);
+    api.setToken(data.token);
+    state.user = data.user;
+    navigate(roleHome(data.user.role));
+  } catch (err) {
+    errText.textContent = err.message || 'Invalid code. Please try again.';
+    errEl.classList.remove('hidden');
+    codeEl.value = '';
+    codeEl.focus();
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-check-circle"></i> Verify Code';
+  }
+}
+
+function cancelTwoFA() {
+  _2faTempToken = null;
+  document.getElementById('twofa-card').classList.add('hidden');
+  document.getElementById('login-card').classList.remove('hidden');
+  document.getElementById('twofa-error').classList.add('hidden');
+  document.getElementById('totp-code').value = '';
 }
 
 function togglePwd() {

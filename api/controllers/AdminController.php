@@ -291,4 +291,57 @@ class AdminController {
 
         echo json_encode(['success' => true]);
     }
+
+    // ── White-Label Branding ──────────────────────────────────────────────────
+
+    public function getBranding(int $companyId): void {
+        Auth::requireAuth('admin');
+        $stmt = $this->db->prepare('SELECT * FROM company_settings WHERE company_id=?');
+        $stmt->execute([$companyId]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            // Return defaults
+            echo json_encode([
+                'company_id'           => $companyId,
+                'logo_url'             => null,
+                'primary_color'        => '#6366f1',
+                'secondary_color'      => '#3b82f6',
+                'company_display_name' => null,
+            ]);
+            return;
+        }
+        echo json_encode($row);
+    }
+
+    public function saveBranding(int $companyId): void {
+        Auth::requireAuth('admin');
+        // Verify company exists
+        $check = $this->db->prepare('SELECT id FROM companies WHERE id=?');
+        $check->execute([$companyId]);
+        if (!$check->fetch()) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Company not found']);
+            return;
+        }
+
+        $b = json_decode(file_get_contents('php://input'), true);
+        $stmt = $this->db->prepare(
+            'INSERT INTO company_settings (company_id, logo_url, primary_color, secondary_color, company_display_name)
+             VALUES (?,?,?,?,?)
+             ON DUPLICATE KEY UPDATE
+               logo_url=VALUES(logo_url),
+               primary_color=VALUES(primary_color),
+               secondary_color=VALUES(secondary_color),
+               company_display_name=VALUES(company_display_name)'
+        );
+        $stmt->execute([
+            $companyId,
+            $b['logo_url'] ?? null,
+            $b['primary_color'] ?? '#6366f1',
+            $b['secondary_color'] ?? '#3b82f6',
+            $b['company_display_name'] ?? null,
+        ]);
+
+        $this->getBranding($companyId);
+    }
 }

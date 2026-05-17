@@ -1,4 +1,11 @@
 <?php
+// SSE must be handled before JSON headers
+$_sseUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+if (preg_match('#^/api/sse$#', $_sseUri)) {
+    require_once __DIR__ . '/sse_handler.php';
+    exit;
+}
+
 // Suppress PHP notices/warnings so they don't corrupt JSON responses
 error_reporting(E_ERROR | E_PARSE);
 ini_set('display_errors', '0');
@@ -12,6 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit; }
 
 require_once __DIR__ . '/config/Database.php';
 require_once __DIR__ . '/middleware/Auth.php';
+require_once __DIR__ . '/services/TotpService.php';
 require_once __DIR__ . '/controllers/AuthController.php';
 require_once __DIR__ . '/controllers/AdminController.php';
 require_once __DIR__ . '/controllers/ManagerController.php';
@@ -19,6 +27,10 @@ require_once __DIR__ . '/controllers/EmployeeController.php';
 require_once __DIR__ . '/controllers/SubscribeController.php';
 require_once __DIR__ . '/controllers/NotificationController.php';
 require_once __DIR__ . '/controllers/TagController.php';
+require_once __DIR__ . '/controllers/WebhookController.php';
+require_once __DIR__ . '/controllers/ProfileController.php';
+require_once __DIR__ . '/controllers/ApiKeyController.php';
+require_once __DIR__ . '/controllers/PublicApiController.php';
 require_once __DIR__ . '/config/stripe.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -29,9 +41,76 @@ $path = rtrim($path, '/') ?: '/';
 $segments = explode('/', trim($path, '/'));
 
 try {
+    // Public API v1 routes (API key auth)
+    if (str_starts_with($path, '/v1/')) {
+        $ctrl = new PublicApiController();
+        if ($path === '/v1/tasks' && $method === 'GET')  { $ctrl->listTasks(); exit; }
+        if ($path === '/v1/tasks' && $method === 'POST') { $ctrl->createTask(); exit; }
+        if ($path === '/v1/projects' && $method === 'GET') { $ctrl->listProjects(); exit; }
+        if (preg_match('#^/v1/tasks/(\d+)$#', $path, $m)) {
+            if ($method === 'GET')   { $ctrl->getTask((int)$m[1]); exit; }
+            if ($method === 'PATCH') { $ctrl->updateTask((int)$m[1]); exit; }
+        }
+        http_response_code(404); echo json_encode(['error' => 'Not found']); exit;
+    }
+
     // Auth routes
     if ($path === '/auth/login' && $method === 'POST') { (new AuthController())->login(); exit; }
     if ($path === '/auth/me' && $method === 'GET') { (new AuthController())->me(); exit; }
+    if ($path === '/auth/2fa/verify' && $method === 'POST') { (new AuthController())->verify2FA(); exit; }
+
+    // Profile routes
+    if ($path === '/profile' && $method === 'GET')  { (new ProfileController())->getProfile(); exit; }
+    if ($path === '/profile/2fa/setup' && $method === 'POST')   { (new ProfileController())->setup2FA(); exit; }
+    if ($path === '/profile/2fa/enable' && $method === 'POST')  { (new ProfileController())->enable2FA(); exit; }
+    if ($path === '/profile/2fa/disable' && $method === 'POST') { (new ProfileController())->disable2FA(); exit; }
+
+    // API Keys routes (manager/admin)
+    if ($path === '/api-keys' && $method === 'GET')  { (new ApiKeyController())->list(); exit; }
+    if ($path === '/api-keys' && $method === 'POST') { (new ApiKeyController())->create(); exit; }
+    if (preg_match('#^/api-keys/(\d+)$#', $path, $m) && $method === 'DELETE') { (new ApiKeyController())->delete((int)$m[1]); exit; }
+    if (preg_match('#^/api-keys/(\d+)/toggle$#', $path, $m) && $method === 'PATCH') { (new ApiKeyController())->toggle((int)$m[1]); exit; }
+
+    // Settings branding (any auth role)
+    if ($path === '/settings/branding' && $method === 'GET') {
+        $user = Auth::requireAuth('admin', 'manager', 'employee');
+        $db   = Database::getInstance();
+        $stmt = $db->prepare('SELECT * FROM company_settings WHERE company_id=?');
+        $stmt->execute([$user['company_id']]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            echo json_encode([
+                'company_id'           => $user['company_id'],
+                'logo_url'             => null,
+                'primary_color'        => '#6366f1',
+                'secondary_color'      => '#3b82f6',
+                'company_display_name' => null,
+            ]);
+        } else {
+            echo json_encode($row);
+        }
+        exit;
+    }
+
+    // Search (regex routes, before role blocks)
+    if (preg_match('#^/(manager|employee)/search$#', $path) && $method === 'GET') {
+        $role = $segments[0];
+        if ($role === 'manager') (new ManagerController())->search();
+        else (new EmployeeController())->search();
+        exit;
+    }
+
+    // Webhooks
+    if ($path === '/manager/webhooks' && $method === 'GET')  { (new WebhookController())->list();   exit; }
+    if ($path === '/manager/webhooks' && $method === 'POST') { (new WebhookController())->create(); exit; }
+    if (preg_match('#^/manager/webhooks/(\d+)$#', $path, $m)) {
+        $wh = new WebhookController();
+        if ($method === 'PUT')    { $wh->update((int)$m[1]); exit; }
+        if ($method === 'DELETE') { $wh->delete((int)$m[1]); exit; }
+    }
+    if (preg_match('#^/manager/webhooks/(\d+)/test$#', $path, $m) && $method === 'POST') {
+        (new WebhookController())->test((int)$m[1]); exit;
+    }
 
     // Public subscription routes (no auth required)
     if ($path === '/subscribe' && $method === 'POST') { (new SubscribeController())->submit(); exit; }
@@ -77,8 +156,79 @@ try {
             $sub === 'subscription-requests' && $method === 'GET' => $admin->listSubscriptionRequests(),
             $sub === 'subscription-requests' && $id && $action === 'approve' && $method === 'PUT' => $admin->approveSubscriptionRequest($id),
             $sub === 'subscription-requests' && $id && $action === 'reject' && $method === 'PUT' => $admin->rejectSubscriptionRequest($id),
+            $sub === 'branding' && $id && $method === 'GET' => $admin->getBranding($id),
+            $sub === 'branding' && $id && $method === 'PUT' => $admin->saveBranding($id),
             default => (function() { http_response_code(404); echo json_encode(['error' => 'Not found']); })()
         };
+        exit;
+    }
+
+    // Subtask routes (manager + employee)
+    if (preg_match('#^/(manager|employee)/tasks/(\d+)/subtasks$#', $path, $m)) {
+        $ctrl = $m[1] === 'manager' ? new ManagerController() : new EmployeeController();
+        match($method) {
+            'GET'  => $ctrl->listSubtasks((int)$m[2]),
+            'POST' => $ctrl->createSubtask((int)$m[2]),
+            default => (function() { http_response_code(405); echo json_encode(['error' => 'Method not allowed']); })()
+        };
+        exit;
+    }
+    if (preg_match('#^/(manager|employee)/tasks/(\d+)/subtasks/(\d+)$#', $path, $m)) {
+        $ctrl = $m[1] === 'manager' ? new ManagerController() : new EmployeeController();
+        match($method) {
+            'PUT'    => $ctrl->updateSubtask((int)$m[2], (int)$m[3]),
+            'DELETE' => $ctrl->deleteSubtask((int)$m[2], (int)$m[3]),
+            default  => (function() { http_response_code(405); echo json_encode(['error' => 'Method not allowed']); })()
+        };
+        exit;
+    }
+
+    // Duplicate task (manager + employee)
+    if (preg_match('#^/(manager|employee)/tasks/(\d+)/duplicate$#', $path, $m) && $method === 'POST') {
+        $ctrl = $m[1] === 'manager' ? new ManagerController() : new EmployeeController();
+        $ctrl->duplicateTask((int)$m[2]);
+        exit;
+    }
+
+    // Task Templates
+    if ($path === '/manager/task-templates') {
+        $ctrl = new ManagerController();
+        match($method) {
+            'GET'  => $ctrl->listTaskTemplates(),
+            'POST' => $ctrl->createTaskTemplate(),
+            default => (function() { http_response_code(405); echo json_encode(['error' => 'Method not allowed']); })()
+        };
+        exit;
+    }
+    if (preg_match('#^/manager/task-templates/(\d+)$#', $path, $m)) {
+        $ctrl = new ManagerController();
+        match($method) {
+            'PUT'    => $ctrl->updateTaskTemplate((int)$m[1]),
+            'DELETE' => $ctrl->deleteTaskTemplate((int)$m[1]),
+            default  => (function() { http_response_code(405); echo json_encode(['error' => 'Method not allowed']); })()
+        };
+        exit;
+    }
+    if (preg_match('#^/manager/tasks/(\d+)/save-as-template$#', $path, $m) && $method === 'POST') {
+        (new ManagerController())->saveTaskAsTemplate((int)$m[1]);
+        exit;
+    }
+
+    // Project Templates
+    if ($path === '/manager/project-templates' && $method === 'GET') {
+        (new ManagerController())->listProjectTemplates();
+        exit;
+    }
+    if (preg_match('#^/manager/workflows/(\d+)/save-as-template$#', $path, $m) && $method === 'POST') {
+        (new ManagerController())->saveProjectAsTemplate((int)$m[1]);
+        exit;
+    }
+    if (preg_match('#^/manager/project-templates/(\d+)/create-project$#', $path, $m) && $method === 'POST') {
+        (new ManagerController())->createProjectFromTemplate((int)$m[1]);
+        exit;
+    }
+    if (preg_match('#^/manager/project-templates/(\d+)$#', $path, $m) && $method === 'DELETE') {
+        (new ManagerController())->deleteProjectTemplate((int)$m[1]);
         exit;
     }
 
@@ -99,12 +249,22 @@ try {
             $sub === 'workflows' && $id && $action === 'members' && $method === 'GET' => $mgr->listProjectMembers($id),
             $sub === 'workflows' && $id && $action === 'members' && $method === 'POST' => $mgr->addProjectMember($id),
             $sub === 'workflows' && $id && $action === 'members' && $method === 'DELETE' && isset($segments[4]) => $mgr->removeProjectMember($id, (int)$segments[4]),
+            $sub === 'workflows' && $id && $action === 'custom-fields' && $method === 'GET' => $mgr->listCustomFields($id),
+            $sub === 'workflows' && $id && $action === 'custom-fields' && $method === 'POST' => $mgr->createCustomField($id),
             $sub === 'workflows' && $method === 'GET' => $mgr->listWorkflows(),
             $sub === 'workflows' && $method === 'POST' => $mgr->createWorkflow(),
             $sub === 'workflows' && $id && $method === 'PUT' => $mgr->updateWorkflow($id),
             $sub === 'workflows' && $id && $method === 'DELETE' => $mgr->deleteWorkflow($id),
-            $sub === 'tasks' && $method === 'GET' => $mgr->listTasks(),
-            $sub === 'tasks' && $method === 'POST' => $mgr->createTask(),
+            $sub === 'custom-fields' && $id && $method === 'PUT' => $mgr->updateCustomField($id),
+            $sub === 'custom-fields' && $id && $method === 'DELETE' => $mgr->deleteCustomField($id),
+            $sub === 'tasks' && $method === 'GET' && !$id => $mgr->listTasks(),
+            $sub === 'tasks' && $method === 'POST' && !$id => $mgr->createTask(),
+            $sub === 'tasks' && $id && $action === 'time-logs' && $method === 'GET' => $mgr->listTimeLogs($id),
+            $sub === 'tasks' && $id && $action === 'time-logs' && $method === 'POST' => $mgr->addTimeLog($id),
+            $sub === 'tasks' && $id && $action === 'time-logs' && $method === 'DELETE' && isset($segments[4]) => $mgr->deleteTimeLog($id, (int)$segments[4]),
+            $sub === 'time-report' && $method === 'GET' => $mgr->timeReport(),
+            $sub === 'tasks' && $id && $action === 'dependencies' && $method === 'POST' => $mgr->addDependency($id),
+            $sub === 'tasks' && $id && $action === 'dependencies' && $method === 'DELETE' && isset($segments[4]) => $mgr->removeDependency($id, (int)$segments[4]),
             $sub === 'tasks' && $id && $action === 'comments' && $method === 'POST' => $mgr->addComment($id),
             $sub === 'tasks' && $id && $action === 'attachments' && $method === 'POST' => $mgr->uploadAttachment($id),
             $sub === 'tasks' && $id && $action === 'attachments' && $method === 'DELETE' && isset($segments[4]) => $mgr->deleteAttachment($id, (int)$segments[4]),
@@ -114,6 +274,7 @@ try {
             $sub === 'tasks' && $id && $method === 'DELETE' => $mgr->deleteTask($id),
             $sub === 'company-users' && $method === 'GET' => $mgr->listCompanyUsers(),
             $sub === 'project-stats' && $method === 'GET' => $mgr->managerProjectStats(),
+            $sub === 'workload' && $method === 'GET' => $mgr->workload(),
             default => (function() { http_response_code(404); echo json_encode(['error' => 'Not found']); })()
         };
         exit;
@@ -133,6 +294,8 @@ try {
             $sub === 'tasks' && $method === 'POST' && !$id => $emp->createTask(),
             $sub === 'tasks' && $id && $method === 'GET' && !$action => $emp->getTask($id),
             $sub === 'tasks' && $id && $action === 'stage' && $method === 'PUT' => $emp->updateStage($id),
+            $sub === 'tasks' && $id && $action === 'time-logs' && $method === 'GET' => $emp->listTimeLogs($id),
+            $sub === 'tasks' && $id && $action === 'time-logs' && $method === 'POST' => $emp->addTimeLog($id),
             $sub === 'tasks' && $id && $action === 'comments' && $method === 'POST' => $emp->addComment($id),
             $sub === 'tasks' && $id && $action === 'attachments' && $method === 'POST' => $emp->uploadAttachment($id),
             $sub === 'tasks' && $id && $action === 'attachments' && $method === 'DELETE' && isset($segments[4]) => $emp->deleteAttachment($id, (int)$segments[4]),
