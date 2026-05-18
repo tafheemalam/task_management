@@ -13,6 +13,19 @@ class EmployeeController {
         $this->authUser = Auth::requireAuth('employee', 'manager');
     }
 
+    private function getTaskLock(int $taskId): array {
+        $stmt = $this->db->prepare(
+            'SELECT ws.name FROM tasks t
+             LEFT JOIN workflow_stages ws ON t.stage_id = ws.id
+             WHERE t.id = ?'
+        );
+        $stmt->execute([$taskId]);
+        $name     = strtolower((string)($stmt->fetchColumn() ?: ''));
+        $isClosed = str_contains($name, 'closed');
+        $isDone   = !$isClosed && (str_contains($name, 'done') || str_contains($name, 'complet'));
+        return ['isDone' => $isDone, 'isClosed' => $isClosed];
+    }
+
     public function search(): void {
         $uid = $this->authUser['id'];
         $cid = $this->authUser['company_id'];
@@ -146,6 +159,12 @@ class EmployeeController {
         $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=? AND (assignee_id=? OR creator_id=?) AND is_active=1');
         $check->execute([$taskId, $cid, $uid, $uid]);
         if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
 
         if (empty($_FILES['file'])) { http_response_code(400); echo json_encode(['error' => 'No file uploaded']); return; }
 
@@ -183,6 +202,12 @@ class EmployeeController {
         $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=? AND is_active=1');
         $check->execute([$taskId, $cid]);
         if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
 
         $att = $this->db->prepare('SELECT * FROM task_attachments WHERE id=? AND task_id=?');
         $att->execute([$attachId, $taskId]);
@@ -236,18 +261,22 @@ class EmployeeController {
         $uid = $this->authUser['id'];
         $cid = $this->authUser['company_id'];
         $b = json_decode(file_get_contents('php://input'), true);
-        $check = $this->db->prepare(
-            'SELECT t.id, ws.name AS stage_name
-             FROM tasks t
-             LEFT JOIN workflow_stages ws ON t.stage_id = ws.id
-             WHERE t.id=? AND t.company_id=? AND (t.assignee_id=? OR t.creator_id=?) AND t.is_active=1'
-        );
+        $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=? AND (assignee_id=? OR creator_id=?) AND is_active=1');
         $check->execute([$id, $cid, $uid, $uid]);
-        $task = $check->fetch();
-        if (!$task) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
-        if (in_array($task['stage_name'], ['Done', 'Closed'])) {
+        if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $curStmt = $this->db->prepare('SELECT ws.name FROM tasks t LEFT JOIN workflow_stages ws ON t.stage_id=ws.id WHERE t.id=?');
+        $curStmt->execute([$id]);
+        $curName  = strtolower((string)($curStmt->fetchColumn() ?: ''));
+        $isDone   = str_contains($curName, 'done') || str_contains($curName, 'complet');
+        $isClosed = str_contains($curName, 'closed');
+        if ($isClosed) {
             http_response_code(403);
-            echo json_encode(['error' => 'This task is already completed and its status cannot be changed.']);
+            echo json_encode(['error' => 'Closed tasks cannot be moved to another stage.']);
+            return;
+        }
+        if ($isDone) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Only a manager can move a task out of Done stage.']);
             return;
         }
         $this->db->prepare('UPDATE tasks SET stage_id=? WHERE id=?')->execute([$b['stage_id'], $id]);
@@ -287,6 +316,12 @@ class EmployeeController {
         $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=? AND (assignee_id=? OR creator_id=?)');
         $check->execute([$taskId, $cid, $uid, $uid]);
         if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
         $b = json_decode(file_get_contents('php://input'), true);
         if (empty($b['content'])) { http_response_code(400); echo json_encode(['error' => 'Content required']); return; }
         $stmt = $this->db->prepare('INSERT INTO comments (task_id, user_id, content) VALUES (?,?,?)');
@@ -343,6 +378,12 @@ class EmployeeController {
         $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=? AND is_active=1 AND (assignee_id=? OR creator_id=?)');
         $check->execute([$taskId, $cid, $uid, $uid]);
         if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
         $b = json_decode(file_get_contents('php://input'), true);
         if (empty($b['title'])) { http_response_code(400); echo json_encode(['error' => 'Title required']); return; }
         $stmt = $this->db->prepare('INSERT INTO subtasks (task_id, title, sort_order) VALUES (?,?, (SELECT COALESCE(MAX(sort_order),0)+1 FROM subtasks s2 WHERE s2.task_id=?))');
@@ -351,6 +392,12 @@ class EmployeeController {
     }
 
     public function updateSubtask(int $taskId, int $subtaskId): void {
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
         $b = json_decode(file_get_contents('php://input'), true);
         $sets = []; $params = [];
         if (isset($b['is_done'])) { $sets[] = 'is_done=?'; $params[] = (int)$b['is_done']; }
@@ -362,6 +409,12 @@ class EmployeeController {
     }
 
     public function deleteSubtask(int $taskId, int $subtaskId): void {
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
         $this->db->prepare('DELETE FROM subtasks WHERE id=? AND task_id=?')->execute([$subtaskId, $taskId]);
         echo json_encode(['status' => 'ok']);
     }

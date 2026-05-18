@@ -76,7 +76,10 @@ const api = {
     listProjectMembers: (wfId) => api.get(`/manager/workflows/${wfId}/members`),
     addProjectMember: (wfId, userId) => api.post(`/manager/workflows/${wfId}/members`, { user_id: userId }),
     removeProjectMember: (wfId, userId) => api.del(`/manager/workflows/${wfId}/members/${userId}`),
-    listTasks: () => api.get('/manager/tasks'),
+    listTasks: (params = {}) => {
+        const qs = new URLSearchParams(params).toString();
+        return api.get('/manager/tasks' + (qs ? '?' + qs : ''));
+    },
     getTask: (id) => api.get(`/manager/tasks/${id}`),
     createTask: (d) => api.post('/manager/tasks', d),
     updateTask: (id, d) => api.put(`/manager/tasks/${id}`, d),
@@ -169,5 +172,6 @@ const api = {
     deleteSubtask: (taskId, subId) => api.del(`/employee/tasks/${taskId}/subtasks/${subId}`),
     // Duplicate
     duplicateTask: (taskId) => api.post(`/employee/tasks/${taskId}/duplicate`),
+    listTaskTemplates: () => api.get('/employee/task-templates'),
   },
 };

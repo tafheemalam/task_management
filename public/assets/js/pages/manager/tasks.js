@@ -4,6 +4,10 @@ let _filterWf = '', _filterPriority = '', _filterAssignee = '';
 let _dragTaskId = null;
 let _mgrSortField = 'due_date';
 let _mgrSortDir   = 'asc';
+let _mgrPage = 1;
+let _mgrPerPage = 50;
+let _mgrTotal = 0;
+let _mgrPages = 1;
 
 async function renderManagerTasks() {
   document.getElementById('app').innerHTML = renderLayout('manager', `
@@ -39,28 +43,28 @@ async function renderManagerTasks() {
                onfocusout="this.style.boxShadow='0 1px 3px rgba(99,102,241,0.08)'">
             <i class="fa-solid fa-magnifying-glass text-sm shrink-0" style="color:#6366f1"></i>
             <input id="filter-search" type="text" class="flex-1 text-sm outline-none bg-transparent placeholder-gray-400"
-                   placeholder="Search tasks by title…" oninput="applyFilters()" />
+                   placeholder="Search tasks by title…" oninput="resetAndFilter()" />
           </div>
           <!-- Project -->
           <div>
             <label class="block text-[11px] font-semibold uppercase tracking-wider mb-1" style="color:#6366f1">
               <i class="fa-solid fa-diagram-project mr-1"></i> Project
             </label>
-            <select id="filter-wf" class="input text-sm" onchange="applyFilters()"><option value="">All Projects</option></select>
+            <select id="filter-wf" class="input text-sm" onchange="resetAndFilter()"><option value="">All Projects</option></select>
           </div>
           <!-- Assignee -->
           <div>
             <label class="block text-[11px] font-semibold uppercase tracking-wider mb-1" style="color:#6366f1">
               <i class="fa-solid fa-user mr-1"></i> Assignee
             </label>
-            <select id="filter-assignee" class="input text-sm" onchange="applyFilters()"><option value="">All Assignees</option></select>
+            <select id="filter-assignee" class="input text-sm" onchange="resetAndFilter()"><option value="">All Assignees</option></select>
           </div>
           <!-- Priority -->
           <div>
             <label class="block text-[11px] font-semibold uppercase tracking-wider mb-1" style="color:#6366f1">
               <i class="fa-solid fa-flag mr-1"></i> Priority
             </label>
-            <select id="filter-priority" class="input text-sm" onchange="applyFilters()">
+            <select id="filter-priority" class="input text-sm" onchange="resetAndFilter()">
               <option value="">All Priorities</option>
               <option value="high">🔴 High</option>
               <option value="medium">🟡 Medium</option>
@@ -72,7 +76,7 @@ async function renderManagerTasks() {
             <label class="block text-[11px] font-semibold uppercase tracking-wider mb-1" style="color:#6366f1">
               <i class="fa-solid fa-circle-dot mr-1"></i> Stage
             </label>
-            <select id="filter-stage" class="input text-sm" onchange="applyFilters()">
+            <select id="filter-stage" class="input text-sm" onchange="resetAndFilter()">
               <option value="">All Stages</option>
             </select>
           </div>
@@ -93,11 +97,16 @@ async function renderManagerTasks() {
     </div>`);
 
   try {
-    [_allTasks, _allWorkflows, _allCompanyUsers] = await Promise.all([
-      api.manager.listTasks(),
+    const [tasksResp, workflows, users] = await Promise.all([
+      api.manager.listTasks({ page: 1, per_page: _mgrPerPage }),
       api.manager.listWorkflows(),
       api.manager.listCompanyUsers(),
     ]);
+    _allTasks = tasksResp.data ?? tasksResp;
+    _mgrTotal = tasksResp.meta?.total ?? _allTasks.length;
+    _mgrPages = tasksResp.meta?.pages ?? 1;
+    _allWorkflows = workflows;
+    _allCompanyUsers = users;
     populateFilters();
     applyFilters();
     setView(_viewMode);
@@ -111,13 +120,16 @@ function populateFilters() {
   const asSel = document.getElementById('filter-assignee');
   _allCompanyUsers.forEach(u => { const o = document.createElement('option'); o.value = u.id; o.textContent = u.name; asSel.appendChild(o); });
 
+  // Build stage list from all workflow stages (not from paginated tasks)
   const stageSel = document.getElementById('filter-stage');
   const seen = new Set();
-  _allTasks.forEach(t => {
-    if (t.stage_name && !seen.has(t.stage_name)) {
-      seen.add(t.stage_name);
-      const o = document.createElement('option'); o.value = t.stage_name; o.textContent = t.stage_name; stageSel.appendChild(o);
-    }
+  _allWorkflows.forEach(wf => {
+    (wf.stages || []).forEach(s => {
+      if (s.name && !seen.has(s.name)) {
+        seen.add(s.name);
+        const o = document.createElement('option'); o.value = s.name; o.textContent = s.name; stageSel.appendChild(o);
+      }
+    });
   });
 }
 
@@ -130,21 +142,45 @@ function setView(mode) {
   applyFilters();
 }
 
-function applyFilters() {
+function resetAndFilter() {
+  _mgrPage = 1;
+  applyFilters();
+}
+
+async function applyFilters() {
   const wf     = document.getElementById('filter-wf')?.value;
   const prio   = document.getElementById('filter-priority')?.value;
   const ass    = document.getElementById('filter-assignee')?.value;
   const stage  = document.getElementById('filter-stage')?.value;
-  const search = (document.getElementById('filter-search')?.value || '').toLowerCase();
-  let filtered = _allTasks.filter(t => {
-    if (wf     && t.workflow_id != wf)                    return false;
-    if (prio   && t.priority !== prio)                    return false;
-    if (ass    && t.assignee_id != ass)                   return false;
-    if (stage  && (t.stage_name || '') !== stage)         return false;
-    if (search && !t.title.toLowerCase().includes(search)) return false;
-    return true;
-  });
-  _viewMode === 'board' ? renderBoard(filtered) : renderList(filtered);
+  const search = document.getElementById('filter-search')?.value || '';
+
+  // Build server-side params
+  const params = { page: _mgrPage, per_page: _mgrPerPage, sort: _mgrSortField, dir: _mgrSortDir };
+  if (wf)     params.workflow_id = wf;
+  if (prio)   params.priority    = prio;
+  if (ass)    params.assignee_id = ass;
+  if (search) params.search      = search;
+  // stage filter: convert stage name to stage_id via workflow data
+  if (stage) {
+    for (const wfObj of _allWorkflows) {
+      const found = (wfObj.stages || []).find(s => s.name === stage);
+      if (found) { params.stage_id = found.id; break; }
+    }
+  }
+
+  try {
+    const resp = await api.manager.listTasks(params);
+    _allTasks  = resp.data ?? resp;
+    _mgrTotal  = resp.meta?.total ?? _allTasks.length;
+    _mgrPages  = resp.meta?.pages ?? 1;
+    _mgrPage   = resp.meta?.page  ?? 1;
+  } catch (err) {
+    showToast(err.message, 'error');
+    return;
+  }
+
+  _viewMode === 'board' ? renderBoard(_allTasks) : renderList(_allTasks);
+  renderMgrPagination();
 }
 
 function renderBoard(tasks) {
@@ -216,6 +252,7 @@ function setMgrSort(field) {
     _mgrSortField = field;
     _mgrSortDir   = 'asc';
   }
+  _mgrPage = 1;
   applyFilters();
 }
 
@@ -240,24 +277,8 @@ function renderList(tasks) {
     return;
   }
 
-  // Sort
-  const priorityRank = { high: 0, medium: 1, low: 2 };
-  const sorted = [...tasks].sort((a, b) => {
-    let av, bv;
-    if (_mgrSortField === 'priority') {
-      av = priorityRank[a.priority] ?? 1;
-      bv = priorityRank[b.priority] ?? 1;
-    } else if (_mgrSortField === 'due_date') {
-      av = a.due_date || '9999-99-99';
-      bv = b.due_date || '9999-99-99';
-    } else {
-      av = (a[_mgrSortField] || '').toString().toLowerCase();
-      bv = (b[_mgrSortField] || '').toString().toLowerCase();
-    }
-    if (av < bv) return _mgrSortDir === 'asc' ? -1 : 1;
-    if (av > bv) return _mgrSortDir === 'asc' ?  1 : -1;
-    return 0;
-  });
+  // Sorting is handled server-side; render tasks as received
+  const sorted = tasks;
 
   viewEl.innerHTML = `
     <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
@@ -640,6 +661,8 @@ function openCreateTaskModal(parentId = null) {
       </div>
     </div>`);
 
+  window._pendingChecklist = []; // reset on new modal open
+
   const wfSel = document.getElementById('task-workflow-sel');
   if (wfSel?.value) loadStagesForTask(wfSel.value);
 
@@ -677,6 +700,17 @@ async function submitCreateTask(e, parentId) {
     const taskId = resp.data?.id || resp.id;
     closeModal();
     await uploadFilesAfterCreate(taskId, fileInput, (id, fd) => api.manager.uploadAttachment(id, fd));
+
+    // Create checklist items from template
+    if (window._pendingChecklist?.length) {
+      await Promise.all(
+        window._pendingChecklist.map((title, i) =>
+          api.manager.createSubtask(taskId, { title, sort_order: i })
+        )
+      );
+      window._pendingChecklist = [];
+    }
+
     showToast('Task created!');
     if (parentId) {
       navigate('manager-task-detail', { id: parentId });
@@ -700,11 +734,52 @@ function deleteTask(id) {
       try {
         await api.manager.deleteTask(id);
         showToast('Task deleted!');
-        _allTasks = _allTasks.filter(t => t.id != id);
         applyFilters();
       } catch (err) { showToast(err.message, 'error'); }
     }
   });
+}
+
+// ── Pagination ────────────────────────────────────────────────────────────────
+
+function renderMgrPagination() {
+  const existing = document.getElementById('mgr-pagination');
+  if (existing) existing.remove();
+  if (_mgrPages <= 1) return;
+
+  const bar = document.createElement('div');
+  bar.id = 'mgr-pagination';
+  bar.className = 'flex items-center justify-between mt-4 px-1';
+  bar.innerHTML = `
+    <p class="text-sm text-gray-500">
+      Showing ${((_mgrPage-1)*_mgrPerPage)+1}–${Math.min(_mgrPage*_mgrPerPage,_mgrTotal)} of <strong>${_mgrTotal}</strong> tasks
+    </p>
+    <div class="flex items-center gap-1">
+      <button onclick="goMgrPage(${_mgrPage-1})" ${_mgrPage<=1?'disabled':''} class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40">
+        <i class="fa-solid fa-chevron-left"></i>
+      </button>
+      ${Array.from({length: Math.min(_mgrPages,7)}, (_,i) => {
+        const p = _mgrPages <= 7 ? i+1 : (
+          _mgrPage <= 4 ? i+1 :
+          _mgrPage >= _mgrPages-3 ? _mgrPages-6+i :
+          _mgrPage-3+i
+        );
+        return `<button onclick="goMgrPage(${p})" class="${p===_mgrPage?'btn-primary':'btn-secondary'} text-xs px-3 py-1.5">${p}</button>`;
+      }).join('')}
+      <button onclick="goMgrPage(${_mgrPage+1})" ${_mgrPage>=_mgrPages?'disabled':''} class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40">
+        <i class="fa-solid fa-chevron-right"></i>
+      </button>
+    </div>`;
+
+  const tasksView = document.getElementById('tasks-view');
+  tasksView?.parentNode?.insertBefore(bar, tasksView.nextSibling);
+}
+
+function goMgrPage(page) {
+  if (page < 1 || page > _mgrPages) return;
+  _mgrPage = page;
+  applyFilters();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ── Drag-and-drop ─────────────────────────────────────────────────────────────
@@ -870,17 +945,19 @@ function applyTaskTemplate(templateId) {
   if (descEl)  descEl.value  = tpl.description    || '';
   if (prioEl)  prioEl.value  = tpl.priority        || 'medium';
 
-  // Pre-populate checklist area if template has checklist items
+  // Store checklist for creation after task is saved
   const checklist = JSON.parse(tpl.checklist || '[]');
+  window._pendingChecklist = checklist;
+
+  // Show preview in the form
   if (checklist.length) {
-    let cfArea = document.getElementById('task-custom-fields-area');
+    const cfArea = document.getElementById('task-custom-fields-area');
     if (cfArea) {
-      const existingChecklist = cfArea.querySelector('#tpl-checklist-preview');
-      if (existingChecklist) existingChecklist.remove();
+      cfArea.querySelector('#tpl-checklist-preview')?.remove();
       const preview = document.createElement('div');
       preview.id = 'tpl-checklist-preview';
       preview.className = 'p-3 bg-indigo-50 rounded-xl border border-indigo-100';
-      preview.innerHTML = `<p class="text-xs font-semibold text-indigo-600 mb-2"><i class="fa-solid fa-list-check mr-1"></i> Checklist from template</p>` +
+      preview.innerHTML = `<p class="text-xs font-semibold text-indigo-600 mb-2"><i class="fa-solid fa-list-check mr-1"></i> ${checklist.length} checklist item${checklist.length > 1 ? 's' : ''} will be added</p>` +
         checklist.map(item => `<p class="text-xs text-gray-600 flex items-center gap-1.5 mb-1"><i class="fa-regular fa-square text-gray-400"></i>${taskEscHtml(item)}</p>`).join('');
       cfArea.prepend(preview);
     }

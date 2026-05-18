@@ -190,6 +190,16 @@ try {
         exit;
     }
 
+    // Task Templates — read-only for employees
+    if ($path === '/employee/task-templates' && $method === 'GET') {
+        $user = Auth::requireAuth('employee', 'manager');
+        $db   = Database::getInstance();
+        $stmt = $db->prepare('SELECT tt.*, u.name as created_by_name FROM task_templates tt JOIN users u ON tt.created_by=u.id WHERE tt.company_id=? ORDER BY tt.name');
+        $stmt->execute([$user['company_id']]);
+        echo json_encode(['status'=>'ok','data'=>$stmt->fetchAll()]);
+        exit;
+    }
+
     // Task Templates
     if ($path === '/manager/task-templates') {
         $ctrl = new ManagerController();

@@ -1,3 +1,10 @@
+function taskLockState(stageName) {
+  const n = (stageName || '').toLowerCase();
+  const isClosed = n.includes('closed');
+  const isDone   = !isClosed && (n.includes('done') || n.includes('complet'));
+  return { isDone, isClosed };
+}
+
 function renderMentionsEmp(text) {
   if (!text) return '';
   // escHtml for employee is done inline in template strings; apply escaping then mention highlight
@@ -37,40 +44,23 @@ async function loadEmpTaskDetail(taskId) {
 }
 
 function renderEmpTaskDetail(task) {
-  const locked = ['Done', 'Closed'].includes(task.stage_name);
+  const lock = taskLockState(task.stage_name);
+  // Stage mover: hidden entirely for both done (employee can't move out) and closed
+  const stageLocked = lock.isDone || lock.isClosed;
 
   // ── Build the "Update Status" section before injecting into the template ──
   let moveTaskHtml = '';
   if (task.workflow_stages?.length) {
-    const pills = (task.workflow_stages || []).map(s => {
-      const active   = task.stage_id == s.id;
-      const style    = active ? `background:${s.color};border-color:${s.color}` : '';
-      const baseCls  = 'px-3 py-1.5 rounded-lg text-xs font-medium border-2';
-      const activeCls = active ? 'text-white border-transparent' : '';
-
-      if (locked) {
-        return `<span class="${baseCls} ${activeCls} ${active ? '' : 'bg-white border-gray-200 text-gray-400'}"
-                      style="${style}">${s.name}</span>`;
-      }
-      return `<button onclick="moveTaskStage(${task.id}, ${s.id}, '${s.name}', this)"
-                class="${baseCls} transition-all ${activeCls} ${active ? '' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-400'}"
-                style="${style}">${s.name}</button>`;
-    }).join('');
-
-    if (locked) {
-      moveTaskHtml = `
-        <div class="bg-green-50 border border-green-200 rounded-xl shadow-sm p-5">
-          <h3 class="font-semibold text-sm mb-2 flex items-center gap-2 text-green-700">
-            <i class="fa-solid fa-lock text-green-500"></i> Task Completed — Status Locked
-          </h3>
-          <p class="text-xs text-green-600 mb-3">
-            <i class="fa-solid fa-circle-check mr-1"></i>
-            This task is marked as <strong>${task.stage_name}</strong>.
-            Its status can no longer be changed.
-          </p>
-          <div class="flex flex-wrap gap-2 opacity-40 pointer-events-none">${pills}</div>
-        </div>`;
-    } else {
+    if (!stageLocked) {
+      const pills = (task.workflow_stages || []).map(s => {
+        const active   = task.stage_id == s.id;
+        const style    = active ? `background:${s.color};border-color:${s.color}` : '';
+        const baseCls  = 'px-3 py-1.5 rounded-lg text-xs font-medium border-2';
+        const activeCls = active ? 'text-white border-transparent' : '';
+        return `<button onclick="moveTaskStage(${task.id}, ${s.id}, '${s.name}', this)"
+                  class="${baseCls} transition-all ${activeCls} ${active ? '' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-400'}"
+                  style="${style}">${s.name}</button>`;
+      }).join('');
       moveTaskHtml = `
         <div class="bg-white border border-gray-100 rounded-xl shadow-sm p-5">
           <h3 class="font-semibold text-gray-700 mb-3 text-sm flex items-center gap-2">
@@ -82,7 +72,7 @@ function renderEmpTaskDetail(task) {
   }
 
   // ── Subtasks HTML ──────────────────────────────────────────────────────────
-  const canAddSubtask = state.user?.can_create_tasks;
+  const canAddSubtask = state.user?.can_create_tasks && !lock.isDone && !lock.isClosed;
   const subtaskItems  = (task.subtasks || []).map(s => `
     <div class="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100"
          onclick="navigate('employee-task-detail',{id:${s.id}})">
@@ -122,7 +112,7 @@ function renderEmpTaskDetail(task) {
            class="text-sm font-medium text-gray-800 hover:text-blue-600 truncate block">${a.original_name}</a>
         <div class="text-xs text-gray-400">${formatFileSize(a.file_size)} · ${formatDateTime(a.created_at)} · ${a.uploader_name}</div>
       </div>
-      ${a.uploaded_by == state.user?.id ? `
+      ${(!lock.isDone && !lock.isClosed && a.uploaded_by == state.user?.id) ? `
         <button onclick="deleteEmpAttachment(${task.id}, ${a.id}, this)"
                 class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs transition-opacity p-1">
           <i class="fa-solid fa-trash"></i>
@@ -136,10 +126,11 @@ function renderEmpTaskDetail(task) {
           <i class="fa-solid fa-paperclip text-blue-500"></i>
           Attachments <span class="text-xs text-gray-400 font-normal">(${task.attachments?.length || 0})</span>
         </h3>
+        ${!lock.isDone && !lock.isClosed ? `
         <label class="btn-secondary text-xs cursor-pointer">
           <i class="fa-solid fa-arrow-up-from-bracket"></i> Upload
           <input type="file" multiple class="hidden" onchange="uploadEmpAttachments(${task.id}, this)" />
-        </label>
+        </label>` : ''}
       </div>
       <div id="emp-attachments-list" class="space-y-2">
         ${attachmentItems || '<p class="text-sm text-gray-400 text-center py-4">No attachments yet</p>'}
@@ -168,6 +159,16 @@ function renderEmpTaskDetail(task) {
 
   // ── Main render ────────────────────────────────────────────────────────────
   document.getElementById('emp-task-detail').innerHTML = `
+    ${lock.isClosed ? `
+    <div class="mb-4 flex items-center gap-3 px-5 py-3.5 rounded-xl text-sm font-medium bg-gray-900 text-gray-100">
+      <i class="fa-solid fa-lock text-gray-400"></i>
+      <span>This task is <strong>Closed</strong> — no further changes can be made.</span>
+    </div>` : ''}
+    ${lock.isDone ? `
+    <div class="mb-4 flex items-center gap-3 px-5 py-3.5 rounded-xl text-sm font-medium bg-amber-50 border border-amber-200 text-amber-800">
+      <i class="fa-solid fa-circle-check text-amber-500"></i>
+      <span>This task is <strong>Done</strong> — locked until a manager moves it back to a previous stage.</span>
+    </div>` : ''}
     <div class="grid lg:grid-cols-3 gap-6">
 
       <!-- Main column -->
@@ -210,15 +211,16 @@ function renderEmpTaskDetail(task) {
             </div>
           </div>
           <div id="emp-checklist-list" class="space-y-1 mb-3">
-            ${renderEmpChecklistItems(task.checklist || [], task.id)}
+            ${renderEmpChecklistItems(task.checklist || [], task.id, lock.isDone || lock.isClosed)}
           </div>
+          ${!lock.isDone && !lock.isClosed ? `
           <div class="flex items-center gap-2">
             <input type="text" id="emp-new-checklist-item" class="input flex-1 text-sm" placeholder="Add checklist item…"
                    onkeydown="if(event.key==='Enter'){addEmpChecklistItem(${task.id});event.preventDefault();}" />
             <button class="btn-secondary text-xs shrink-0" onclick="addEmpChecklistItem(${task.id})">
               <i class="fa-solid fa-plus"></i> Add
             </button>
-          </div>
+          </div>` : `<p class="text-xs text-gray-400 mt-2 italic"><i class="fa-solid fa-lock mr-1"></i>Checklist locked</p>`}
         </div>
 
         <!-- Subtasks -->
@@ -234,6 +236,7 @@ function renderEmpTaskDetail(task) {
             Comments (${task.comments?.length || 0})
           </h3>
           <div id="emp-comments-list" class="space-y-4 mb-4">${commentItems}</div>
+          ${!lock.isDone && !lock.isClosed ? `
           <div class="flex gap-3">
             <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center
                         text-white text-xs font-bold flex-shrink-0">
@@ -246,7 +249,7 @@ function renderEmpTaskDetail(task) {
                 <i class="fa-solid fa-paper-plane"></i> Post
               </button>
             </div>
-          </div>
+          </div>` : `<p class="text-xs text-gray-400 italic"><i class="fa-solid fa-lock mr-1"></i>Comments locked</p>`}
         </div>
       </div>
 
@@ -496,20 +499,21 @@ function empChecklistProgressText(items) {
   return `${done} of ${items.length} done`;
 }
 
-function renderEmpChecklistItems(items, taskId) {
+function renderEmpChecklistItems(items, taskId, locked = false) {
   if (!items || !items.length) {
     return '<p class="text-sm text-gray-400 italic py-2">No checklist items yet</p>';
   }
   return items.map(item => `
     <div class="flex items-center gap-2 py-1.5 group" data-emp-checklist-id="${item.id}">
-      <input type="checkbox" class="w-4 h-4 rounded accent-indigo-600 shrink-0 cursor-pointer"
+      <input type="checkbox" class="w-4 h-4 rounded accent-indigo-600 shrink-0 ${locked ? '' : 'cursor-pointer'}"
              ${+item.is_done ? 'checked' : ''}
-             onchange="toggleEmpChecklistItem(${taskId}, ${item.id}, this.checked)" />
+             ${locked ? 'disabled' : `onchange="toggleEmpChecklistItem(${taskId}, ${item.id}, this.checked)"`} />
       <span class="flex-1 text-sm ${+item.is_done ? 'line-through text-gray-400' : 'text-gray-700'}">${item.title}</span>
+      ${locked ? '' : `
       <button onclick="deleteEmpChecklistItem(${taskId}, ${item.id})"
               class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs transition-opacity p-1 shrink-0">
         <i class="fa-solid fa-xmark"></i>
-      </button>
+      </button>`}
     </div>`).join('');
 }
 

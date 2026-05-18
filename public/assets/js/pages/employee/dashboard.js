@@ -692,66 +692,129 @@ async function openEmpCreateTaskModal() {
   try { workflows = await api.employee.listWorkflows(); } catch {}
 
   const wfOptions = workflows.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+  window._empWorkflows = workflows;
+  window._pendingEmpChecklist = [];
 
   openModal(`
     <div class="modal-overlay">
-      <div class="modal-box">
-        <div class="p-6 border-b border-gray-100 flex items-center justify-between">
-          <h3 class="text-lg font-semibold text-gray-900">New Task</h3>
-          <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl">
+      <div class="modal-box" style="max-width:820px;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">
+
+        <!-- Header -->
+        <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+          <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#6366f1,#3b82f6)">
+              <i class="fa-solid fa-plus text-white text-sm"></i>
+            </div>
+            <h3 class="text-lg font-semibold text-gray-900">Create New Task</h3>
+          </div>
+          <button onclick="closeModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
             <i class="fa-solid fa-xmark"></i>
           </button>
         </div>
-        <form id="emp-task-form" onsubmit="submitEmpCreateTask(event)" class="p-6 space-y-4">
-          <div><label class="label">Title <span class="text-red-500">*</span></label><input name="title" class="input" required /></div>
-          <div><label class="label">Description</label><textarea name="description" class="input" rows="3"></textarea></div>
-          <div class="grid grid-cols-2 gap-4">
-            <div><label class="label">Priority</label>
-              <select name="priority" class="input">
+
+        <!-- Body: 2-column -->
+        <form id="emp-task-form" onsubmit="submitEmpCreateTask(event)" style="flex:1;overflow-y:auto;display:flex;min-height:0">
+
+          <!-- LEFT — content -->
+          <div class="flex-1 p-6 space-y-4 overflow-y-auto" style="min-width:0;border-right:1px solid #f1f5f9">
+            <button type="button" class="btn-secondary w-full justify-center text-sm" onclick="openEmpTemplatePicker()">
+              <i class="fa-solid fa-wand-magic-sparkles text-indigo-400"></i> Use Template
+            </button>
+            <div>
+              <label class="label">Task Title <span class="text-red-500">*</span></label>
+              <input name="title" class="input text-base" placeholder="What needs to be done?" required />
+            </div>
+
+            <div>
+              <label class="label">Description</label>
+              <textarea name="description" class="input" rows="5" placeholder="Add details, steps, or context…"></textarea>
+            </div>
+
+            <div>
+              <label class="label" style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em">Attachments</label>
+              <label class="flex items-center gap-2.5 cursor-pointer border-2 border-dashed border-gray-200 rounded-xl p-3 hover:border-indigo-300 hover:bg-indigo-50 transition-all">
+                <i class="fa-solid fa-paperclip text-gray-400"></i>
+                <span id="emp-attach-label" class="text-sm text-gray-400 flex-1">Choose files…</span>
+                <input type="file" id="emp-attach-files" multiple class="hidden"
+                       onchange="updateAttachLabel(this,'emp-attach-label')" />
+              </label>
+            </div>
+
+            <div id="emp-task-error" class="hidden p-3 bg-red-50 border border-red-100 text-red-600 text-sm rounded-xl">
+              <i class="fa-solid fa-circle-exclamation mr-1.5"></i><span></span>
+            </div>
+          </div>
+
+          <!-- RIGHT — metadata -->
+          <div class="p-5 space-y-4 overflow-y-auto shrink-0" style="width:216px;background:#f8fafc">
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-diagram-project mr-1 text-indigo-400"></i> Project <span class="text-red-500">*</span>
+              </label>
+              <select name="workflow_id" class="input text-sm" id="emp-workflow-sel"
+                      onchange="empLoadStages(this.value)" required>
+                <option value="">Select project…</option>${wfOptions}
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-circle-dot mr-1 text-blue-400"></i> Stage
+              </label>
+              <select name="stage_id" class="input text-sm" id="emp-stage-sel">
+                <option value="">No stage</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-flag mr-1 text-yellow-400"></i> Priority
+              </label>
+              <select name="priority" class="input text-sm">
                 <option value="high">🔴 High</option>
                 <option value="medium" selected>🟡 Medium</option>
                 <option value="low">🟢 Low</option>
               </select>
             </div>
-            <div><label class="label">Due Date <span class="text-red-500">*</span></label>
-              <input name="due_date" type="date" class="input" required />
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-calendar-day mr-1 text-red-400"></i> Due Date <span class="text-red-500">*</span>
+              </label>
+              <input name="due_date" type="date" class="input text-sm" required />
             </div>
-            <div><label class="label">Project <span class="text-red-500">*</span></label>
-              <select name="workflow_id" class="input" id="emp-workflow-sel"
-                      onchange="empLoadStages(this.value)" required>
-                <option value="">Select a project</option>${wfOptions}
-              </select>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                <i class="fa-solid fa-calendar-plus mr-1 text-gray-400"></i> Start Date
+              </label>
+              <input name="start_date" type="date" class="input text-sm" />
             </div>
-            <div><label class="label">Stage</label>
-              <select name="stage_id" class="input" id="emp-stage-sel">
-                <option value="">No stage</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label class="label">Attachments <span class="text-gray-400 font-normal text-xs">(optional)</span></label>
-            <label class="flex items-center gap-2 cursor-pointer border-2 border-dashed border-gray-200 rounded-lg p-3 hover:border-blue-300 hover:bg-blue-50 transition-all">
-              <i class="fa-solid fa-paperclip text-gray-400 text-sm"></i>
-              <span id="modal-attach-label" class="text-sm text-gray-400 flex-1">Choose files…</span>
-              <input type="file" id="modal-attach-files" multiple class="hidden"
-                     onchange="updateAttachLabel(this,'modal-attach-label')" />
-            </label>
-          </div>
-          <div id="emp-task-error" class="hidden p-3 bg-red-50 text-red-600 text-sm rounded-lg"></div>
-          <div class="flex justify-end gap-3">
-            <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
-            <button type="submit" class="btn-primary">Create Task</button>
+
           </div>
         </form>
+
+        <!-- Footer -->
+        <div class="px-6 py-3.5 border-t border-gray-100 flex justify-end gap-3 shrink-0 bg-white">
+          <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+          <button type="submit" form="emp-task-form" class="btn-primary">
+            <i class="fa-solid fa-plus"></i> Create Task
+          </button>
+        </div>
+
       </div>
     </div>`);
-
-  window._empWorkflows = workflows;
 
   if (_empSelectedProject) {
     const sel = document.getElementById('emp-workflow-sel');
     if (sel) { sel.value = _empSelectedProject; empLoadStages(_empSelectedProject); }
   }
+
+  const titleInput   = document.querySelector('#emp-task-form [name="title"]');
+  const dueDateInput = document.querySelector('#emp-task-form [name="due_date"]');
+  if (titleInput)   setupFieldValidation(titleInput,   [_validators.required]);
+  if (dueDateInput) setupFieldValidation(dueDateInput, [_validators.required]);
 }
 
 function empLoadStages(wfId) {
@@ -764,22 +827,120 @@ function empLoadStages(wfId) {
   });
 }
 
+async function openEmpTemplatePicker() {
+  let templates = [];
+  try {
+    const res = await api.employee.listTaskTemplates();
+    templates = res.data || [];
+  } catch (err) { showToast(err.message, 'error'); return; }
+
+  if (!templates.length) { showToast('No task templates yet.', 'info'); return; }
+  window._empTemplates = templates;
+
+  // Remove existing panel if open (toggle)
+  if (document.getElementById('emp-template-picker-panel')) {
+    document.getElementById('emp-template-picker-panel').remove(); return;
+  }
+
+  const panel = document.createElement('div');
+  panel.id = 'emp-template-picker-panel';
+  panel.style.cssText = 'position:absolute;top:56px;left:16px;right:16px;z-index:9999;background:#fff;border:1px solid #e0e7ff;border-radius:14px;box-shadow:0 8px 32px rgba(99,102,241,0.18);max-height:320px;overflow-y:auto';
+  panel.innerHTML = `
+    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100 sticky top-0 bg-white">
+      <span class="text-sm font-semibold text-gray-800"><i class="fa-solid fa-wand-magic-sparkles text-indigo-500 mr-2"></i>Choose a Template</span>
+      <button onclick="document.getElementById('emp-template-picker-panel').remove()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="p-3 space-y-1.5">
+      ${templates.map(t => `
+        <div onclick="applyEmpTaskTemplate(${t.id})"
+             class="p-3 rounded-xl border border-gray-100 cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition-all">
+          <div class="font-medium text-gray-800 text-sm">${t.name}</div>
+          <div class="flex items-center gap-3 mt-1 text-xs text-gray-500">
+            ${priorityBadge(t.priority)}
+            ${t.checklist ? `<span><i class="fa-solid fa-list-check mr-0.5"></i>${JSON.parse(t.checklist||'[]').length} items</span>` : ''}
+          </div>
+        </div>`).join('')}
+    </div>`;
+
+  const modalBox = document.querySelector('.modal-box');
+  if (modalBox) { modalBox.style.position = 'relative'; modalBox.appendChild(panel); }
+}
+
+function applyEmpTaskTemplate(templateId) {
+  const tpl = (window._empTemplates || []).find(t => t.id == templateId);
+  if (!tpl) return;
+
+  document.getElementById('emp-template-picker-panel')?.remove();
+
+  const form = document.getElementById('emp-task-form');
+  if (!form) return;
+
+  const titleEl = form.querySelector('[name=title]');
+  const descEl  = form.querySelector('[name=description]');
+  const prioEl  = form.querySelector('[name=priority]');
+  if (titleEl) titleEl.value = tpl.title_template || '';
+  if (descEl)  descEl.value  = tpl.description    || '';
+  if (prioEl)  prioEl.value  = tpl.priority        || 'medium';
+
+  const checklist = JSON.parse(tpl.checklist || '[]');
+  window._pendingEmpChecklist = checklist;
+
+  if (checklist.length) {
+    const area = form.querySelector('#emp-task-error');
+    const existing = document.getElementById('emp-tpl-checklist-preview');
+    existing?.remove();
+    if (area) {
+      const preview = document.createElement('div');
+      preview.id = 'emp-tpl-checklist-preview';
+      preview.className = 'p-3 bg-indigo-50 rounded-xl border border-indigo-100';
+      preview.innerHTML = `<p class="text-xs font-semibold text-indigo-600 mb-2"><i class="fa-solid fa-list-check mr-1"></i> ${checklist.length} checklist item${checklist.length > 1 ? 's' : ''} will be added</p>` +
+        checklist.map(item => `<p class="text-xs text-gray-600 flex items-center gap-1.5 mb-1"><i class="fa-regular fa-square text-gray-400"></i>${item}</p>`).join('');
+      area.parentNode.insertBefore(preview, area);
+    }
+  }
+
+  showToast('Template applied!', 'success');
+}
+
 async function submitEmpCreateTask(e) {
   e.preventDefault();
-  const data  = Object.fromEntries(new FormData(e.target).entries());
+  const titleInput   = document.querySelector('#emp-task-form [name="title"]');
+  const dueDateInput = document.querySelector('#emp-task-form [name="due_date"]');
+  if (!validateForm([
+    ...(titleInput   ? [{ input: titleInput,   rules: [_validators.required] }] : []),
+    ...(dueDateInput ? [{ input: dueDateInput, rules: [_validators.required] }] : []),
+  ])) return;
+
+  const data = Object.fromEntries(new FormData(e.target).entries());
   if (!data.stage_id)    delete data.stage_id;
   if (!data.assignee_id) delete data.assignee_id;
-  const errEl = document.getElementById('emp-task-error');
+
+  const errEl     = document.getElementById('emp-task-error');
+  const fileInput = document.getElementById('emp-attach-files');
+  const submitBtn = document.querySelector('#emp-task-form ~ div button[type="submit"]')
+                 || document.querySelector('[form="emp-task-form"]');
   errEl.classList.add('hidden');
-  const fileInput = document.getElementById('modal-attach-files');
+  if (submitBtn) setButtonLoading(submitBtn, true);
   try {
-    const task = await api.employee.createTask(data);
+    const resp   = await api.employee.createTask(data);
+    const taskId = resp.data?.id || resp.id;
     closeModal();
-    await uploadFilesAfterCreate(task.id, fileInput, (id, fd) => api.employee.uploadAttachment(id, fd));
+    await uploadFilesAfterCreate(taskId, fileInput, (id, fd) => api.employee.uploadAttachment(id, fd));
+
+    if (window._pendingEmpChecklist?.length) {
+      await Promise.all(
+        window._pendingEmpChecklist.map((title, i) =>
+          api.employee.createSubtask(taskId, { title, sort_order: i })
+        )
+      );
+      window._pendingEmpChecklist = [];
+    }
+
     showToast('Task created!');
-    navigate('employee-task-detail', { id: task.id });
+    navigate('employee-task-detail', { id: taskId });
   } catch (err) {
-    errEl.textContent = err.message;
+    errEl.querySelector('span').textContent = err.message;
     errEl.classList.remove('hidden');
+    if (submitBtn) setButtonLoading(submitBtn, false);
   }
 }

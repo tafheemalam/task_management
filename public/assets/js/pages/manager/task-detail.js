@@ -3,6 +3,13 @@ let _currentTask      = null;
 let _currentWorkflows = [];
 let _currentUsers     = [];
 
+function taskLockState(stageName) {
+  const n = (stageName || '').toLowerCase();
+  const isClosed = n.includes('closed');
+  const isDone   = !isClosed && (n.includes('done') || n.includes('complet'));
+  return { isDone, isClosed };
+}
+
 function renderMentions(text) {
   if (!text) return '';
   return escHtml(text).replace(/@([\w]+(?:\s[\w]+)?)/g,
@@ -67,12 +74,23 @@ function renderTaskDetail() {
   const task         = _currentTask;
   const workflows    = _currentWorkflows;
   const companyUsers = _currentUsers;
+  const lock         = taskLockState(task.stage_name);
 
   const stageOptions = (task.workflow_stages || []).map(s =>
     `<option value="${s.id}" ${task.stage_id == s.id ? 'selected' : ''}>${s.name}</option>`
   ).join('');
 
   document.getElementById('task-detail-content').innerHTML = `
+    ${lock.isClosed ? `
+    <div class="mb-4 flex items-center gap-3 px-5 py-3.5 rounded-xl text-sm font-medium bg-gray-900 text-gray-100">
+      <i class="fa-solid fa-lock text-gray-400"></i>
+      <span>This task is <strong>Closed</strong> — no further changes can be made.</span>
+    </div>` : ''}
+    ${lock.isDone ? `
+    <div class="mb-4 flex items-center gap-3 px-5 py-3.5 rounded-xl text-sm font-medium bg-amber-50 border border-amber-200 text-amber-800">
+      <i class="fa-solid fa-circle-check text-amber-500"></i>
+      <span>This task is <strong>Done</strong> — subtasks, checklist, attachments and comments are locked. Move it back to unlock.</span>
+    </div>` : ''}
     <div class="grid lg:grid-cols-3 gap-5">
 
       <!-- ── Main ─────────────────────────────────────────────── -->
@@ -96,6 +114,7 @@ function renderTaskDetail() {
               </div>
             </div>
             <div class="flex items-center gap-2 shrink-0 flex-wrap">
+              ${!lock.isClosed ? `
               <button class="btn-secondary text-xs" onclick="openEditTaskModal()">
                 <i class="fa-solid fa-pen"></i> Edit
               </button>
@@ -104,7 +123,7 @@ function renderTaskDetail() {
               </button>
               <button class="btn-secondary text-xs" onclick="saveCurrentTaskAsTemplate(${task.id})">
                 <i class="fa-solid fa-wand-magic-sparkles"></i> Save as Template
-              </button>
+              </button>` : ''}
               <button class="btn-danger text-xs" onclick="deleteTaskFromDetail(${task.id})">
                 <i class="fa-solid fa-trash"></i>
               </button>
@@ -118,7 +137,7 @@ function renderTaskDetail() {
         </div>
 
         <!-- Stage mover (quick pill buttons) -->
-        ${(task.workflow_stages || []).length ? `
+        ${lock.isClosed ? '' : (task.workflow_stages || []).length ? `
           <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
             <div class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
               <i class="fa-solid fa-arrows-left-right text-blue-500"></i> Move to Stage
@@ -154,15 +173,16 @@ function renderTaskDetail() {
             </div>
           </div>
           <div id="checklist-list" class="space-y-1 mb-3">
-            ${renderChecklistItems(task.checklist || [], task.id)}
+            ${renderChecklistItems(task.checklist || [], task.id, lock.isDone || lock.isClosed)}
           </div>
+          ${!lock.isDone && !lock.isClosed ? `
           <div class="flex items-center gap-2">
             <input type="text" id="new-checklist-item" class="input flex-1 text-sm" placeholder="Add checklist item…"
                    onkeydown="if(event.key==='Enter'){addChecklistItem(${task.id});event.preventDefault();}" />
             <button class="btn-secondary text-xs shrink-0" onclick="addChecklistItem(${task.id})">
               <i class="fa-solid fa-plus"></i> Add
             </button>
-          </div>
+          </div>` : `<p class="text-xs text-gray-400 mt-2 italic"><i class="fa-solid fa-lock mr-1"></i>Checklist locked</p>`}
         </div>
 
         <!-- Subtasks (child tasks) -->
@@ -172,9 +192,10 @@ function renderTaskDetail() {
               <i class="fa-solid fa-bars-staggered text-indigo-500"></i> Sub-Tasks
               <span class="text-xs text-gray-400 font-normal">(${task.subtasks?.length || 0})</span>
             </h3>
+            ${!lock.isDone && !lock.isClosed ? `
             <button class="btn-secondary text-xs" onclick="openCreateSubtaskModal(${task.id})">
               <i class="fa-solid fa-plus"></i> Add Sub-Task
-            </button>
+            </button>` : ''}
           </div>
           <div id="subtasks-list">
             ${task.subtasks?.length
@@ -205,10 +226,11 @@ function renderTaskDetail() {
               <i class="fa-solid fa-paperclip text-blue-500"></i> Attachments
               <span class="text-xs text-gray-400 font-normal">(${task.attachments?.length || 0})</span>
             </h3>
+            ${!lock.isDone && !lock.isClosed ? `
             <label class="btn-secondary text-xs cursor-pointer">
               <i class="fa-solid fa-arrow-up-from-bracket"></i> Upload
               <input type="file" multiple class="hidden" onchange="uploadMgrAttachments(${task.id}, this)" />
-            </label>
+            </label>` : ''}
           </div>
           <div id="mgr-attachments-list" class="space-y-2">
             ${(task.attachments || []).length
@@ -222,10 +244,11 @@ function renderTaskDetail() {
                          class="text-sm font-medium text-gray-800 hover:text-blue-600 truncate block">${escHtml(a.original_name)}</a>
                       <div class="text-xs text-gray-400">${formatFileSize(a.file_size)} · ${formatDateTime(a.created_at)} · ${escHtml(a.uploader_name)}</div>
                     </div>
+                    ${!lock.isDone && !lock.isClosed ? `
                     <button onclick="deleteMgrAttachment(${task.id}, ${a.id}, this)"
                             class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs transition-opacity p-1">
                       <i class="fa-solid fa-trash"></i>
-                    </button>
+                    </button>` : ''}
                   </div>`).join('')
               : '<p class="text-sm text-gray-400 text-center py-4">No attachments yet</p>'}
           </div>
@@ -242,6 +265,7 @@ function renderTaskDetail() {
               ? task.comments.map(c => commentHtml(c)).join('')
               : '<p class="text-center text-sm text-gray-400 py-4">No comments yet</p>'}
           </div>
+          ${!lock.isDone && !lock.isClosed ? `
           <div class="flex gap-3">
             <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
               ${avatarInitials(state.user?.name)}
@@ -252,7 +276,7 @@ function renderTaskDetail() {
                 <i class="fa-solid fa-paper-plane"></i> Post
               </button>
             </div>
-          </div>
+          </div>` : `<p class="text-xs text-gray-400 italic"><i class="fa-solid fa-lock mr-1"></i>Comments locked</p>`}
         </div>
 
         <!-- Time Tracking -->
@@ -287,6 +311,7 @@ function renderTaskDetail() {
           <h3 class="text-sm font-semibold text-gray-700 mb-4">Task Details</h3>
           <div class="space-y-3 text-sm">
 
+            ${!lock.isClosed ? `
             <div>
               <span class="text-xs text-gray-400 uppercase tracking-wider">Stage</span>
               <div class="mt-1">
@@ -295,7 +320,7 @@ function renderTaskDetail() {
                   ${stageOptions}
                 </select>
               </div>
-            </div>
+            </div>` : ''}
 
             ${detailRow('Priority', priorityBadge(task.priority))}
             ${detailRow('Assignee', `<span class="font-medium text-gray-800">${escHtml(task.assignee_name || '—')}</span>`)}
@@ -1088,20 +1113,21 @@ function checklistProgressText(items) {
   return `${done} of ${items.length} done`;
 }
 
-function renderChecklistItems(items, taskId) {
+function renderChecklistItems(items, taskId, locked = false) {
   if (!items || !items.length) {
     return '<p class="text-sm text-gray-400 italic py-2">No checklist items yet</p>';
   }
   return items.map(item => `
     <div class="flex items-center gap-2 py-1.5 group" data-checklist-id="${item.id}">
-      <input type="checkbox" class="w-4 h-4 rounded accent-indigo-600 shrink-0 cursor-pointer"
+      <input type="checkbox" class="w-4 h-4 rounded accent-indigo-600 shrink-0 ${locked ? '' : 'cursor-pointer'}"
              ${+item.is_done ? 'checked' : ''}
-             onchange="toggleChecklistItem(${taskId}, ${item.id}, this.checked)" />
+             ${locked ? 'disabled' : `onchange="toggleChecklistItem(${taskId}, ${item.id}, this.checked)"`} />
       <span class="flex-1 text-sm ${+item.is_done ? 'line-through text-gray-400' : 'text-gray-700'}">${escHtml(item.title)}</span>
+      ${locked ? '' : `
       <button onclick="deleteChecklistItem(${taskId}, ${item.id})"
               class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs transition-opacity p-1 shrink-0">
         <i class="fa-solid fa-xmark"></i>
-      </button>
+      </button>`}
     </div>`).join('');
 }
 

@@ -18,6 +18,19 @@ class ManagerController {
         return (int)$this->authUser['company_id'];
     }
 
+    private function getTaskLock(int $taskId): array {
+        $stmt = $this->db->prepare(
+            'SELECT ws.name FROM tasks t
+             LEFT JOIN workflow_stages ws ON t.stage_id = ws.id
+             WHERE t.id = ?'
+        );
+        $stmt->execute([$taskId]);
+        $name     = strtolower((string)($stmt->fetchColumn() ?: ''));
+        $isClosed = str_contains($name, 'closed');
+        $isDone   = !$isClosed && (str_contains($name, 'done') || str_contains($name, 'complet'));
+        return ['isDone' => $isDone, 'isClosed' => $isClosed];
+    }
+
     private function checkUsageLimit(string $resource): ?string {
         // Note: ManagerController is only reachable by role='manager'.
         // Admins use AdminController which has no limits.
@@ -195,18 +208,54 @@ class ManagerController {
 
     public function listWorkflows(): void {
         $cid = $this->companyId();
-        $stmt = $this->db->prepare('SELECT w.*, (SELECT COUNT(*) FROM workflow_stages WHERE workflow_id=w.id) as stage_count FROM workflows w WHERE w.company_id=? ORDER BY w.created_at DESC');
+
+        // Single query for all workflows
+        $stmt = $this->db->prepare(
+            'SELECT w.*, (SELECT COUNT(*) FROM workflow_stages WHERE workflow_id=w.id) as stage_count
+             FROM workflows w WHERE w.company_id=? ORDER BY w.created_at DESC'
+        );
         $stmt->execute([$cid]);
         $workflows = $stmt->fetchAll();
-        foreach ($workflows as &$wf) {
-            $stages = $this->db->prepare('SELECT * FROM workflow_stages WHERE workflow_id=? ORDER BY order_index ASC');
-            $stages->execute([$wf['id']]);
-            $wf['stages'] = $stages->fetchAll();
 
-            $members = $this->db->prepare('SELECT u.id, u.name, u.email FROM workflow_members wm JOIN users u ON wm.user_id=u.id WHERE wm.workflow_id=? ORDER BY u.name ASC');
-            $members->execute([$wf['id']]);
-            $wf['members'] = $members->fetchAll();
+        if (empty($workflows)) { echo json_encode([]); return; }
+
+        $wfIds = array_column($workflows, 'id');
+        $placeholders = implode(',', array_fill(0, count($wfIds), '?'));
+
+        // Bulk fetch all stages for all workflows in one query
+        $stagesStmt = $this->db->prepare(
+            "SELECT * FROM workflow_stages WHERE workflow_id IN ($placeholders) ORDER BY order_index ASC"
+        );
+        $stagesStmt->execute($wfIds);
+        $allStages = $stagesStmt->fetchAll();
+
+        // Bulk fetch all members for all workflows in one query
+        $membersStmt = $this->db->prepare(
+            "SELECT wm.workflow_id, u.id, u.name, u.email
+             FROM workflow_members wm JOIN users u ON wm.user_id=u.id
+             WHERE wm.workflow_id IN ($placeholders) ORDER BY u.name ASC"
+        );
+        $membersStmt->execute($wfIds);
+        $allMembers = $membersStmt->fetchAll();
+
+        // Group stages by workflow_id
+        $stagesByWf = [];
+        foreach ($allStages as $s) {
+            $stagesByWf[$s['workflow_id']][] = $s;
         }
+
+        // Group members by workflow_id
+        $membersByWf = [];
+        foreach ($allMembers as $m) {
+            $membersByWf[$m['workflow_id']][] = $m;
+        }
+
+        // Attach to workflows
+        foreach ($workflows as &$wf) {
+            $wf['stages']  = $stagesByWf[$wf['id']]  ?? [];
+            $wf['members'] = $membersByWf[$wf['id']] ?? [];
+        }
+
         echo json_encode($workflows);
     }
 
@@ -279,10 +328,73 @@ class ManagerController {
     // ── Tasks ─────────────────────────────────────────────────────────────────
 
     public function listTasks(): void {
-        $cid = $this->companyId();
-        $stmt = $this->db->prepare('SELECT t.*, u.name as assignee_name, c.name as creator_name, ws.name as stage_name, ws.color as stage_color, w.name as workflow_name, (SELECT COUNT(*) FROM tasks WHERE parent_task_id=t.id AND is_active=1) as subtask_count FROM tasks t LEFT JOIN users u ON t.assignee_id=u.id LEFT JOIN users c ON t.creator_id=c.id LEFT JOIN workflow_stages ws ON t.stage_id=ws.id LEFT JOIN workflows w ON t.workflow_id=w.id WHERE t.company_id=? AND t.parent_task_id IS NULL AND t.is_active=1 ORDER BY t.created_at DESC');
-        $stmt->execute([$cid]);
-        echo json_encode($stmt->fetchAll());
+        $cid     = $this->companyId();
+        $page    = max(1, (int)($_GET['page']    ?? 1));
+        $perPage = min(100, max(10, (int)($_GET['per_page'] ?? 50)));
+        $offset  = ($page - 1) * $perPage;
+
+        // Build WHERE clause from optional filters
+        $where  = ['t.company_id=?', 't.parent_task_id IS NULL', 't.is_active=1'];
+        $params = [$cid];
+
+        if (!empty($_GET['workflow_id'])) {
+            $where[]  = 't.workflow_id=?';
+            $params[] = (int)$_GET['workflow_id'];
+        }
+        if (!empty($_GET['assignee_id'])) {
+            $where[]  = 't.assignee_id=?';
+            $params[] = (int)$_GET['assignee_id'];
+        }
+        if (!empty($_GET['priority'])) {
+            $where[]  = 't.priority=?';
+            $params[] = $_GET['priority'];
+        }
+        if (!empty($_GET['stage_id'])) {
+            $where[]  = 't.stage_id=?';
+            $params[] = (int)$_GET['stage_id'];
+        }
+        if (!empty($_GET['search'])) {
+            $where[]  = 't.title LIKE ?';
+            $params[] = '%' . $_GET['search'] . '%';
+        }
+
+        $whereStr = implode(' AND ', $where);
+
+        // Total count
+        $countStmt = $this->db->prepare("SELECT COUNT(*) FROM tasks t WHERE $whereStr");
+        $countStmt->execute($params);
+        $total = (int)$countStmt->fetchColumn();
+
+        // Paginated results
+        $sort      = in_array($_GET['sort'] ?? '', ['title','priority','due_date','created_at']) ? $_GET['sort'] : 'created_at';
+        $dir       = ($_GET['dir'] ?? 'desc') === 'asc' ? 'ASC' : 'DESC';
+        $dataParams = array_merge($params, [$perPage, $offset]);
+
+        $stmt = $this->db->prepare(
+            "SELECT t.*, u.name as assignee_name, c.name as creator_name,
+                    ws.name as stage_name, ws.color as stage_color, w.name as workflow_name,
+                    (SELECT COUNT(*) FROM tasks WHERE parent_task_id=t.id AND is_active=1) as subtask_count
+             FROM tasks t
+             LEFT JOIN users u  ON t.assignee_id=u.id
+             LEFT JOIN users c  ON t.creator_id=c.id
+             LEFT JOIN workflow_stages ws ON t.stage_id=ws.id
+             LEFT JOIN workflows w ON t.workflow_id=w.id
+             WHERE $whereStr
+             ORDER BY t.$sort $dir
+             LIMIT ? OFFSET ?"
+        );
+        $stmt->execute($dataParams);
+        $tasks = $stmt->fetchAll();
+
+        echo json_encode([
+            'data' => $tasks,
+            'meta' => [
+                'page'     => $page,
+                'per_page' => $perPage,
+                'total'    => $total,
+                'pages'    => (int)ceil($total / $perPage),
+            ],
+        ]);
     }
 
     public function getTask(int $id): void {
@@ -361,6 +473,12 @@ class ManagerController {
         $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=? AND is_active=1');
         $check->execute([$taskId, $cid]);
         if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
 
         if (empty($_FILES['file'])) { http_response_code(400); echo json_encode(['error' => 'No file uploaded']); return; }
 
@@ -398,6 +516,12 @@ class ManagerController {
         $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=? AND is_active=1');
         $check->execute([$taskId, $cid]);
         if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
 
         $att = $this->db->prepare('SELECT * FROM task_attachments WHERE id=? AND task_id=?');
         $att->execute([$attachId, $taskId]);
@@ -480,6 +604,12 @@ class ManagerController {
         $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=?');
         $check->execute([$id, $cid]);
         if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $lock = $this->getTaskLock($id);
+        if ($lock['isClosed']) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Task is closed and cannot be changed.']);
+            return;
+        }
         if (empty($b['workflow_id'])) { http_response_code(400); echo json_encode(['error' => 'Project (workflow) is required']); return; }
         $err = $this->validateTaskFields($b, $cid);
         if ($err) { http_response_code(400); echo json_encode(['error' => $err]); return; }
@@ -551,6 +681,12 @@ class ManagerController {
         $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=?');
         $check->execute([$taskId, $cid]);
         if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
         $b = json_decode(file_get_contents('php://input'), true);
         if (empty($b['content'])) { http_response_code(400); echo json_encode(['error' => 'Content required']); return; }
         $uid = $this->authUser['id'];
@@ -947,6 +1083,12 @@ class ManagerController {
         $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=?');
         $check->execute([$taskId, $cid]);
         if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
         $b = json_decode(file_get_contents('php://input'), true);
         if (empty($b['title'])) { http_response_code(400); echo json_encode(['error' => 'Title required']); return; }
         $stmt = $this->db->prepare('INSERT INTO subtasks (task_id, title, sort_order) VALUES (?,?, (SELECT COALESCE(MAX(sort_order),0)+1 FROM subtasks s2 WHERE s2.task_id=?))');
@@ -955,6 +1097,12 @@ class ManagerController {
     }
 
     public function updateSubtask(int $taskId, int $subtaskId): void {
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
         $b = json_decode(file_get_contents('php://input'), true);
         $sets = []; $params = [];
         if (isset($b['is_done'])) { $sets[] = 'is_done=?'; $params[] = (int)$b['is_done']; }
@@ -966,6 +1114,12 @@ class ManagerController {
     }
 
     public function deleteSubtask(int $taskId, int $subtaskId): void {
+        $lock = $this->getTaskLock($taskId);
+        if ($lock['isClosed'] || $lock['isDone']) {
+            http_response_code(403);
+            echo json_encode(['error' => $lock['isClosed'] ? 'Task is closed and cannot be changed.' : 'Comments are disabled while task is in Done stage.']);
+            return;
+        }
         $this->db->prepare('DELETE FROM subtasks WHERE id=? AND task_id=?')->execute([$subtaskId, $taskId]);
         echo json_encode(['status' => 'ok']);
     }

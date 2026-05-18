@@ -178,6 +178,22 @@ $tables = [
         FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
         FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
     )",
+
+    // ── Step 5: Performance indexes ───────────────────────────────────────────
+
+    'idx_tasks_company'              => "CREATE INDEX IF NOT EXISTS idx_tasks_company ON tasks(company_id)",
+    'idx_tasks_assignee'             => "CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id)",
+    'idx_tasks_workflow'             => "CREATE INDEX IF NOT EXISTS idx_tasks_workflow ON tasks(workflow_id)",
+    'idx_tasks_stage'                => "CREATE INDEX IF NOT EXISTS idx_tasks_stage ON tasks(stage_id)",
+    'idx_tasks_parent'               => "CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id)",
+    'idx_notifications_user'         => "CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)",
+    'idx_activity_log_task'          => "CREATE INDEX IF NOT EXISTS idx_activity_log_task ON activity_log(task_id)",
+    'idx_time_logs_task'             => "CREATE INDEX IF NOT EXISTS idx_time_logs_task ON time_logs(task_id)",
+    'idx_task_tags_task'             => "CREATE INDEX IF NOT EXISTS idx_task_tags_task ON task_tags(task_id)",
+    'idx_subtasks_task'              => "CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id)",
+    'idx_task_custom_values_task'    => "CREATE INDEX IF NOT EXISTS idx_task_custom_values_task ON task_custom_values(task_id)",
+    'idx_workflow_members_workflow'  => "CREATE INDEX IF NOT EXISTS idx_workflow_members_workflow ON workflow_members(workflow_id)",
+    'idx_workflow_members_user'      => "CREATE INDEX IF NOT EXISTS idx_workflow_members_user ON workflow_members(user_id)",
 ];
 
 foreach ($tables as $name => $sql) {
