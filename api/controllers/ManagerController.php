@@ -366,21 +366,29 @@ class ManagerController {
         $total = (int)$countStmt->fetchColumn();
 
         // Paginated results
-        $sort      = in_array($_GET['sort'] ?? '', ['title','priority','due_date','created_at']) ? $_GET['sort'] : 'created_at';
-        $dir       = ($_GET['dir'] ?? 'desc') === 'asc' ? 'ASC' : 'DESC';
+        $sortInput = $_GET['sort'] ?? '';
+        if ($sortInput === 'staleness') {
+            $dirIn   = ($_GET['dir'] ?? 'asc') === 'desc' ? 'DESC' : 'ASC';
+            $orderBy = "COALESCE(t.stage_updated_at, t.created_at) $dirIn";
+        } else {
+            $sort    = in_array($sortInput, ['title','priority','due_date','created_at']) ? $sortInput : 'created_at';
+            $dirIn   = ($_GET['dir'] ?? 'desc') === 'asc' ? 'ASC' : 'DESC';
+            $orderBy = "t.$sort $dirIn";
+        }
         $dataParams = array_merge($params, [$perPage, $offset]);
 
         $stmt = $this->db->prepare(
             "SELECT t.*, u.name as assignee_name, c.name as creator_name,
                     ws.name as stage_name, ws.color as stage_color, w.name as workflow_name,
-                    (SELECT COUNT(*) FROM tasks WHERE parent_task_id=t.id AND is_active=1) as subtask_count
+                    (SELECT COUNT(*) FROM tasks WHERE parent_task_id=t.id AND is_active=1) as subtask_count,
+                    DATEDIFF(NOW(), COALESCE(t.stage_updated_at, t.created_at)) as days_since_moved
              FROM tasks t
              LEFT JOIN users u  ON t.assignee_id=u.id
              LEFT JOIN users c  ON t.creator_id=c.id
              LEFT JOIN workflow_stages ws ON t.stage_id=ws.id
              LEFT JOIN workflows w ON t.workflow_id=w.id
              WHERE $whereStr
-             ORDER BY t.$sort $dir
+             ORDER BY $orderBy
              LIMIT ? OFFSET ?"
         );
         $stmt->execute($dataParams);
@@ -399,7 +407,7 @@ class ManagerController {
 
     public function getTask(int $id): void {
         $cid = $this->companyId();
-        $stmt = $this->db->prepare('SELECT t.*, u.name as assignee_name, cr.name as creator_name, ws.name as stage_name, ws.color as stage_color, w.name as workflow_name FROM tasks t LEFT JOIN users u ON t.assignee_id=u.id LEFT JOIN users cr ON t.creator_id=cr.id LEFT JOIN workflow_stages ws ON t.stage_id=ws.id LEFT JOIN workflows w ON t.workflow_id=w.id WHERE t.id=? AND t.company_id=?');
+        $stmt = $this->db->prepare('SELECT t.*, u.name as assignee_name, cr.name as creator_name, ws.name as stage_name, ws.color as stage_color, w.name as workflow_name, DATEDIFF(NOW(), COALESCE(t.stage_updated_at, t.created_at)) as days_since_moved FROM tasks t LEFT JOIN users u ON t.assignee_id=u.id LEFT JOIN users cr ON t.creator_id=cr.id LEFT JOIN workflow_stages ws ON t.stage_id=ws.id LEFT JOIN workflows w ON t.workflow_id=w.id WHERE t.id=? AND t.company_id=?');
         $stmt->execute([$id, $cid]);
         $task = $stmt->fetch();
         if (!$task) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
@@ -613,15 +621,21 @@ class ManagerController {
         if (empty($b['workflow_id'])) { http_response_code(400); echo json_encode(['error' => 'Project (workflow) is required']); return; }
         $err = $this->validateTaskFields($b, $cid);
         if ($err) { http_response_code(400); echo json_encode(['error' => $err]); return; }
-        // Fetch old assignee before update to detect changes
-        $oldTask = $this->db->prepare('SELECT assignee_id, title FROM tasks WHERE id=?');
+        // Fetch old row before update to detect changes
+        $oldTask = $this->db->prepare('SELECT assignee_id, stage_id, title FROM tasks WHERE id=?');
         $oldTask->execute([$id]);
         $oldRow = $oldTask->fetch();
         $oldAssigneeId = $oldRow ? (int)$oldRow['assignee_id'] : null;
+        $oldStageId    = $oldRow ? (int)$oldRow['stage_id']    : null;
 
         $recurrenceRule = $b['recurrence_rule'] ?? 'none';
         $recurrenceEndDate = !empty($b['recurrence_end_date']) ? $b['recurrence_end_date'] : null;
         $this->db->prepare('UPDATE tasks SET title=?, description=?, priority=?, stage_id=?, workflow_id=?, assignee_id=?, start_date=?, due_date=?, recurrence_rule=?, recurrence_end_date=? WHERE id=?')->execute([$b['title'], $b['description'] ?? null, $b['priority'] ?? 'medium', $b['stage_id'] ?? null, $b['workflow_id'], $b['assignee_id'] ?? null, $b['start_date'] ?? null, $b['due_date'] ?? null, $recurrenceRule, $recurrenceEndDate, $id]);
+        // Track stage moves for task aging feature
+        $newStageId = !empty($b['stage_id']) ? (int)$b['stage_id'] : null;
+        if ($newStageId !== $oldStageId) {
+            $this->db->prepare('UPDATE tasks SET stage_updated_at = NOW() WHERE id=?')->execute([$id]);
+        }
         $this->logActivity($id, 'Task updated');
 
         // Check if new stage is a done stage and task has recurrence
@@ -1400,5 +1414,144 @@ class ManagerController {
             'total_overdue'=> $totalOverdue,
             'users'        => $result,
         ]);
+    }
+
+    // ── Kudos ──────────────────────────────────────────────────────────────────
+
+    public function giveKudos(int $taskId): void {
+        $cid = $this->companyId();
+        $uid = (int)$this->authUser['id'];
+
+        $stmt = $this->db->prepare('SELECT id, assignee_id FROM tasks WHERE id=? AND company_id=?');
+        $stmt->execute([$taskId, $cid]);
+        $task = $stmt->fetch();
+        if (!$task) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        if (!$task['assignee_id']) { http_response_code(400); echo json_encode(['error' => 'Task has no assignee to kudos']); return; }
+        if ((int)$task['assignee_id'] === $uid) { http_response_code(400); echo json_encode(['error' => 'You cannot give kudos to yourself']); return; }
+
+        $body    = json_decode(file_get_contents('php://input'), true) ?? [];
+        $message = trim($body['message'] ?? '') ?: null;
+
+        $this->db->prepare(
+            'INSERT INTO kudos (task_id, giver_id, receiver_id, message)
+             VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE message = VALUES(message), created_at = NOW()'
+        )->execute([$taskId, $uid, (int)$task['assignee_id'], $message]);
+
+        $giverName = $this->authUser['name'];
+        $this->db->prepare(
+            'INSERT INTO notifications (user_id, type, message, task_id) VALUES (?, ?, ?, ?)'
+        )->execute([$task['assignee_id'], 'kudos', "{$giverName} gave you kudos!", $taskId]);
+
+        echo json_encode(['ok' => true]);
+    }
+
+    public function getTaskKudos(int $taskId): void {
+        $cid = $this->companyId();
+        $uid = (int)$this->authUser['id'];
+
+        $check = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=?');
+        $check->execute([$taskId, $cid]);
+        if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+
+        $stmt = $this->db->prepare(
+            'SELECT k.id, k.giver_id, k.message, k.created_at, g.name as giver_name
+             FROM kudos k
+             JOIN users g ON g.id = k.giver_id
+             WHERE k.task_id = ?
+             ORDER BY k.created_at DESC'
+        );
+        $stmt->execute([$taskId]);
+        $kudos    = $stmt->fetchAll();
+        $hasGiven = !empty(array_filter($kudos, fn($k) => (int)$k['giver_id'] === $uid));
+
+        echo json_encode(['kudos' => $kudos, 'has_given' => $hasGiven]);
+    }
+
+    public function kudosLeaderboard(): void {
+        $cid = $this->companyId();
+        $stmt = $this->db->prepare(
+            'SELECT u.id, u.name, COUNT(k.id) as kudos_count, MAX(k.created_at) as last_kudos_at
+             FROM users u
+             JOIN kudos k ON k.receiver_id = u.id
+             JOIN tasks t ON t.id = k.task_id
+             WHERE t.company_id = ?
+             GROUP BY u.id, u.name
+             ORDER BY kudos_count DESC
+             LIMIT 10'
+        );
+        $stmt->execute([$cid]);
+        echo json_encode($stmt->fetchAll());
+    }
+
+    // ── Client View Portal ────────────────────────────────────────────────────
+
+    public function listShares(): void {
+        $cid  = $this->companyId();
+        $wfId = isset($_GET['workflow_id']) ? (int)$_GET['workflow_id'] : null;
+
+        $sql    = 'SELECT cs.token, cs.label, cs.expires_at, cs.is_active, cs.created_at,
+                          w.name as workflow_name, w.id as workflow_id
+                   FROM client_shares cs
+                   JOIN workflows w ON cs.workflow_id = w.id
+                   WHERE w.company_id = ?';
+        $params = [$cid];
+
+        if ($wfId) {
+            $sql    .= ' AND cs.workflow_id = ?';
+            $params[] = $wfId;
+        }
+
+        $sql .= ' ORDER BY cs.created_at DESC';
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+        echo json_encode(['status' => 'ok', 'data' => $stmt->fetchAll()]);
+    }
+
+    public function createShare(): void {
+        $b        = json_decode(file_get_contents('php://input'), true) ?? [];
+        $wfId     = (int)($b['workflow_id'] ?? 0);
+        $label    = trim($b['label'] ?? '');
+        $expiresAt = !empty($b['expires_at']) ? $b['expires_at'] : null;
+
+        if (!$wfId) {
+            http_response_code(422);
+            echo json_encode(['error' => 'workflow_id required']);
+            return;
+        }
+
+        $chk = $this->db->prepare('SELECT id FROM workflows WHERE id = ? AND company_id = ?');
+        $chk->execute([$wfId, $this->companyId()]);
+        if (!$chk->fetch()) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Project not found']);
+            return;
+        }
+
+        $token = bin2hex(random_bytes(24));
+
+        $this->db->prepare(
+            'INSERT INTO client_shares (token, workflow_id, created_by, label, expires_at) VALUES (?, ?, ?, ?, ?)'
+        )->execute([$token, $wfId, $this->authUser['id'], $label ?: null, $expiresAt]);
+
+        echo json_encode(['status' => 'ok', 'token' => $token]);
+    }
+
+    public function deleteShare(string $token): void {
+        $cid  = $this->companyId();
+        $chk  = $this->db->prepare(
+            'SELECT cs.id FROM client_shares cs
+             JOIN workflows w ON cs.workflow_id = w.id
+             WHERE cs.token = ? AND w.company_id = ?'
+        );
+        $chk->execute([$token, $cid]);
+        if (!$chk->fetch()) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Share not found']);
+            return;
+        }
+
+        $this->db->prepare('DELETE FROM client_shares WHERE token = ?')->execute([$token]);
+        echo json_encode(['status' => 'ok']);
     }
 }

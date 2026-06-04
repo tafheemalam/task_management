@@ -32,6 +32,7 @@ const routes = {
 
   // Shared
   'shared-profile': () => renderProfile(),
+  'client-share': (p) => renderClientShare(p),
 
   // Admin enterprise
   'admin-branding': () => renderBranding(),
@@ -71,6 +72,13 @@ async function logout() {
 // ─── Boot ──────────────────────────────────────────────────────────────────────
 
 async function boot() {
+  // Client share portal — no auth needed
+  const shareToken = new URLSearchParams(window.location.search).get('share');
+  if (shareToken) {
+    navigate('client-share', { token: shareToken });
+    return;
+  }
+
   if (api.token) {
     try {
       const user = await api.auth.me();

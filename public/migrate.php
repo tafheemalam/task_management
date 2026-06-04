@@ -194,6 +194,37 @@ $tables = [
     'idx_task_custom_values_task'    => "CREATE INDEX IF NOT EXISTS idx_task_custom_values_task ON task_custom_values(task_id)",
     'idx_workflow_members_workflow'  => "CREATE INDEX IF NOT EXISTS idx_workflow_members_workflow ON workflow_members(workflow_id)",
     'idx_workflow_members_user'      => "CREATE INDEX IF NOT EXISTS idx_workflow_members_user ON workflow_members(user_id)",
+
+    // ── Feature: Task Aging / Momentum Score ─────────────────────────────────
+    'tasks_stage_updated_at' => "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS stage_updated_at TIMESTAMP NULL DEFAULT NULL",
+
+    // ── Feature: Client View Portal ──────────────────────────────────────────
+    'client_shares' => "CREATE TABLE IF NOT EXISTS client_shares (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        token VARCHAR(64) NOT NULL UNIQUE,
+        workflow_id INT NOT NULL,
+        created_by INT NOT NULL,
+        label VARCHAR(100) NULL,
+        expires_at TIMESTAMP NULL DEFAULT NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+    )",
+
+    // ── Feature: Peer Kudos ───────────────────────────────────────────────────
+    'kudos' => "CREATE TABLE IF NOT EXISTS kudos (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        task_id INT NOT NULL,
+        giver_id INT NOT NULL,
+        receiver_id INT NOT NULL,
+        message VARCHAR(255) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_task_giver (task_id, giver_id),
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        FOREIGN KEY (giver_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
+    )",
 ];
 
 foreach ($tables as $name => $sql) {

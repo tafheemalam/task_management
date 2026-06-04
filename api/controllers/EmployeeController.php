@@ -70,7 +70,8 @@ class EmployeeController {
         $stmt = $this->db->prepare(
             'SELECT t.*, u.name as assignee_name, c.name as creator_name,
                     ws.name as stage_name, ws.color as stage_color, w.name as workflow_name,
-                    (SELECT COUNT(*) FROM tasks WHERE parent_task_id=t.id AND is_active=1) as subtask_count
+                    (SELECT COUNT(*) FROM tasks WHERE parent_task_id=t.id AND is_active=1) as subtask_count,
+                    DATEDIFF(NOW(), COALESCE(t.stage_updated_at, t.created_at)) as days_since_moved
              FROM tasks t
              LEFT JOIN users u             ON t.assignee_id = u.id
              LEFT JOIN users c             ON t.creator_id  = c.id
@@ -90,7 +91,8 @@ class EmployeeController {
         $stmt = $this->db->prepare(
             'SELECT t.*, u.name as assignee_name, c.name as creator_name,
                     ws.name as stage_name, ws.color as stage_color, w.name as workflow_name,
-                    (SELECT COUNT(*) FROM tasks WHERE parent_task_id=t.id AND is_active=1) as subtask_count
+                    (SELECT COUNT(*) FROM tasks WHERE parent_task_id=t.id AND is_active=1) as subtask_count,
+                    DATEDIFF(NOW(), COALESCE(t.stage_updated_at, t.created_at)) as days_since_moved
              FROM tasks t
              LEFT JOIN users u             ON t.assignee_id = u.id
              LEFT JOIN users c             ON t.creator_id  = c.id
@@ -110,7 +112,8 @@ class EmployeeController {
         $stmt = $this->db->prepare(
             'SELECT t.*, u.name as assignee_name, cr.name as creator_name,
                     ws.name as stage_name, ws.color as stage_color,
-                    w.name as workflow_name
+                    w.name as workflow_name,
+                    DATEDIFF(NOW(), COALESCE(t.stage_updated_at, t.created_at)) as days_since_moved
              FROM tasks t
              LEFT JOIN users u            ON t.assignee_id = u.id
              LEFT JOIN users cr           ON t.creator_id  = cr.id
@@ -279,7 +282,7 @@ class EmployeeController {
             echo json_encode(['error' => 'Only a manager can move a task out of Done stage.']);
             return;
         }
-        $this->db->prepare('UPDATE tasks SET stage_id=? WHERE id=?')->execute([$b['stage_id'], $id]);
+        $this->db->prepare('UPDATE tasks SET stage_id=?, stage_updated_at=NOW() WHERE id=?')->execute([$b['stage_id'], $id]);
         $this->logActivity($id, 'Stage updated');
         echo json_encode(['success' => true]);
     }
@@ -508,5 +511,63 @@ class EmployeeController {
         );
         $stmt->execute([$taskId]);
         echo json_encode($stmt->fetchAll());
+    }
+
+    // ── Kudos ──────────────────────────────────────────────────────────────────
+
+    public function giveKudos(int $taskId): void {
+        $cid = (int)$this->authUser['company_id'];
+        $uid = (int)$this->authUser['id'];
+
+        $stmt = $this->db->prepare(
+            'SELECT id, assignee_id FROM tasks WHERE id=? AND company_id=? AND is_active=1
+             AND workflow_id IN (SELECT workflow_id FROM workflow_members WHERE user_id=?)'
+        );
+        $stmt->execute([$taskId, $cid, $uid]);
+        $task = $stmt->fetch();
+        if (!$task) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        if (!$task['assignee_id']) { http_response_code(400); echo json_encode(['error' => 'Task has no assignee to kudos']); return; }
+        if ((int)$task['assignee_id'] === $uid) { http_response_code(400); echo json_encode(['error' => 'You cannot give kudos to yourself']); return; }
+
+        $body    = json_decode(file_get_contents('php://input'), true) ?? [];
+        $message = trim($body['message'] ?? '') ?: null;
+
+        $this->db->prepare(
+            'INSERT INTO kudos (task_id, giver_id, receiver_id, message)
+             VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE message = VALUES(message), created_at = NOW()'
+        )->execute([$taskId, $uid, (int)$task['assignee_id'], $message]);
+
+        $giverName = $this->authUser['name'];
+        $this->db->prepare(
+            'INSERT INTO notifications (user_id, type, message, task_id) VALUES (?, ?, ?, ?)'
+        )->execute([$task['assignee_id'], 'kudos', "{$giverName} gave you kudos!", $taskId]);
+
+        echo json_encode(['ok' => true]);
+    }
+
+    public function getTaskKudos(int $taskId): void {
+        $cid = (int)$this->authUser['company_id'];
+        $uid = (int)$this->authUser['id'];
+
+        $check = $this->db->prepare(
+            'SELECT id FROM tasks WHERE id=? AND company_id=? AND is_active=1
+             AND workflow_id IN (SELECT workflow_id FROM workflow_members WHERE user_id=?)'
+        );
+        $check->execute([$taskId, $cid, $uid]);
+        if (!$check->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+
+        $stmt = $this->db->prepare(
+            'SELECT k.id, k.giver_id, k.message, k.created_at, g.name as giver_name
+             FROM kudos k
+             JOIN users g ON g.id = k.giver_id
+             WHERE k.task_id = ?
+             ORDER BY k.created_at DESC'
+        );
+        $stmt->execute([$taskId]);
+        $kudos    = $stmt->fetchAll();
+        $hasGiven = !empty(array_filter($kudos, fn($k) => (int)$k['giver_id'] === $uid));
+
+        echo json_encode(['kudos' => $kudos, 'has_given' => $hasGiven]);
     }
 }

@@ -126,6 +126,14 @@ const api = {
     createSubtask: (taskId, data) => api.post(`/manager/tasks/${taskId}/subtasks`, data),
     updateSubtask: (taskId, subId, data) => api.put(`/manager/tasks/${taskId}/subtasks/${subId}`, data),
     deleteSubtask: (taskId, subId) => api.del(`/manager/tasks/${taskId}/subtasks/${subId}`),
+    // Kudos
+    getTaskKudos: (taskId) => api.get(`/manager/tasks/${taskId}/kudos`),
+    giveKudos: (taskId, message) => api.post(`/manager/tasks/${taskId}/kudos`, { message }),
+    kudosLeaderboard: () => api.get('/manager/kudos/leaderboard'),
+    // Client Share Portal
+    listShares: (wfId) => api.get('/manager/client-shares' + (wfId ? `?workflow_id=${wfId}` : '')),
+    createShare: (d) => api.post('/manager/client-shares', d),
+    deleteShare: (token) => api.del(`/manager/client-shares/${token}`),
     // Duplicate
     duplicateTask: (taskId) => api.post(`/manager/tasks/${taskId}/duplicate`),
     // Task Templates
@@ -170,8 +178,14 @@ const api = {
     createSubtask: (taskId, data) => api.post(`/employee/tasks/${taskId}/subtasks`, data),
     updateSubtask: (taskId, subId, data) => api.put(`/employee/tasks/${taskId}/subtasks/${subId}`, data),
     deleteSubtask: (taskId, subId) => api.del(`/employee/tasks/${taskId}/subtasks/${subId}`),
+    // Kudos
+    getTaskKudos: (taskId) => api.get(`/employee/tasks/${taskId}/kudos`),
+    giveKudos: (taskId, message) => api.post(`/employee/tasks/${taskId}/kudos`, { message }),
     // Duplicate
     duplicateTask: (taskId) => api.post(`/employee/tasks/${taskId}/duplicate`),
     listTaskTemplates: () => api.get('/employee/task-templates'),
+  },
+  share: {
+    get: (token) => api.get(`/share/${token}`),
   },
 };

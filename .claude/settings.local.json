@@ -19,7 +19,12 @@
       "Bash(\"C:\\\\xampp2.0\\\\mysql\\\\bin\\\\mysql.exe\" -u root taskmanagement -e \"CREATE TABLE IF NOT EXISTS task_attachments \\(id INT AUTO_INCREMENT PRIMARY KEY, task_id INT NOT NULL, uploaded_by INT NOT NULL, filename VARCHAR\\(255\\) NOT NULL, original_name VARCHAR\\(255\\) NOT NULL, mime_type VARCHAR\\(100\\), file_size INT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY \\(task_id\\) REFERENCES tasks\\(id\\) ON DELETE CASCADE, FOREIGN KEY \\(uploaded_by\\) REFERENCES users\\(id\\) ON DELETE CASCADE\\); ALTER TABLE subscription_requests ADD COLUMN IF NOT EXISTS payment_intent_id VARCHAR\\(255\\) NULL, ADD COLUMN IF NOT EXISTS payment_status ENUM\\('pending','paid','failed'\\) NOT NULL DEFAULT 'pending', ADD COLUMN IF NOT EXISTS amount_paid DECIMAL\\(10,2\\) NULL;\")",
       "Bash(\"C:\\\\xampp2.0\\\\php\\\\php.exe\" -r \"echo phpversion\\(\\);\")",
       "Bash(\"C:\\\\xampp2.0\\\\mysql\\\\bin\\\\mysql.exe\" -u root taskmanagement -e \"ALTER TABLE subscription_requests MODIFY COLUMN payment_status ENUM\\('pending','paid','failed','trial'\\) NOT NULL DEFAULT 'pending'; ALTER TABLE subscription_requests ADD COLUMN IF NOT EXISTS is_trial TINYINT\\(1\\) NOT NULL DEFAULT 0;\")",
-      "Bash(del \"g:\\\\Task Management\\\\Procfile\")"
+      "Bash(del \"g:\\\\Task Management\\\\Procfile\")",
+      "PowerShell($loginResp = Invoke-RestMethod -Uri \"http://localhost:8080/api/auth/login\" -Method POST -ContentType \"application/json\" -Body '{\"email\":\"tafheem.alam.professional@gmail.com\",\"password\":\"password\"}' -ErrorAction SilentlyContinue; Write-Host \"Login response: $\\($loginResp | ConvertTo-Json -Depth 2\\)\")",
+      "Bash(python -c \"import sys,re; body=sys.stdin.read\\(\\); matches=re.findall\\(r'\\(client_shares[^<]{0,200}\\)', body\\); print\\('\\\\n'.join\\(matches[:3]\\)\\)\")",
+      "Bash(Select-String -Pattern \"client_shares|All tables\")",
+      "Bash(Select-Object -First 5)",
+      "PowerShell($result = Invoke-WebRequest -Uri \"http://localhost:8080/migrate.php\" -UseBasicParsing; $result.Content | Select-String -Pattern \"client_shares|All tables\")"
     ]
   }
 }

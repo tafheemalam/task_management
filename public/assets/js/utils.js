@@ -602,6 +602,79 @@ function exportTasksToPDF(tasks, title = 'Task Report') {
   win.document.close();
 }
 
+function exportTasksToExcel(tasks, filename = 'tasks.xlsx', title = 'Task Report', filterSummary = '') {
+  if (typeof XLSX === 'undefined') { showToast('Excel library not loaded — please refresh and try again', 'error'); return; }
+
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  // Meta rows at top
+  const aoa = [
+    [title],
+    [`Generated: ${today}${filterSummary ? '  |  ' + filterSummary : ''}`],
+    [`Total tasks: ${tasks.length}`],
+    [], // blank spacer
+    // Column headers
+    ['#', 'Title', 'Description', 'Project', 'Stage', 'Priority', 'Assignee', 'Creator',
+     'Start Date', 'Due Date', 'Overdue?', 'Recurrence', 'Checklist Items', 'Days Stale',
+     'Created', 'Last Updated'],
+  ];
+
+  const today0 = new Date(new Date().toDateString());
+
+  for (const t of tasks) {
+    const od = t.due_date && new Date(t.due_date) < today0
+               && !['done','closed'].includes((t.stage_name || '').toLowerCase());
+    aoa.push([
+      t.id,
+      t.title || '',
+      (t.description || '').replace(/<[^>]*>/g, '').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').trim(),
+      t.workflow_name || '',
+      t.stage_name || '',
+      t.priority ? t.priority.charAt(0).toUpperCase() + t.priority.slice(1) : '',
+      t.assignee_name || '',
+      t.creator_name || '',
+      t.start_date || '',
+      t.due_date || '',
+      od ? 'Yes' : 'No',
+      t.recurrence_rule && t.recurrence_rule !== 'none' ? t.recurrence_rule : '',
+      t.subtask_count ? +t.subtask_count : 0,
+      t.days_since_moved ? +t.days_since_moved : 0,
+      t.created_at ? t.created_at.split('T')[0] : '',
+      t.updated_at ? t.updated_at.split('T')[0] : '',
+    ]);
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Column widths
+  ws['!cols'] = [
+    {wch: 6},   // #
+    {wch: 42},  // Title
+    {wch: 52},  // Description
+    {wch: 22},  // Project
+    {wch: 18},  // Stage
+    {wch: 12},  // Priority
+    {wch: 22},  // Assignee
+    {wch: 22},  // Creator
+    {wch: 14},  // Start Date
+    {wch: 14},  // Due Date
+    {wch: 10},  // Overdue?
+    {wch: 14},  // Recurrence
+    {wch: 16},  // Checklist Items
+    {wch: 12},  // Days Stale
+    {wch: 14},  // Created
+    {wch: 14},  // Last Updated
+  ];
+
+  // Freeze header rows (row 5 = index 4 after 4 meta + 1 header)
+  ws['!freeze'] = { xSplit: 0, ySplit: 5 };
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Tasks');
+  XLSX.writeFile(wb, filename);
+  showToast(`Excel report downloaded — ${tasks.length} task${tasks.length !== 1 ? 's' : ''}`);
+}
+
 // ─── Command Palette (Ctrl+K) ─────────────────────────────────────────────────
 let _paletteOpen = false;
 let _paletteTimeout = null;
@@ -793,6 +866,255 @@ async function markAllNotifsRead() {
     refreshNotifBadge();
     showToast('All notifications marked as read');
   } catch(e) { showToast(e.message, 'error'); }
+}
+
+// ── Focus Mode + Pomodoro Timer ───────────────────────────────────────────────
+const FocusMode = (() => {
+  let _task = null, _interval = null, _totalSecs = 25*60, _remaining = 25*60, _running = false, _sessions = 0;
+  const R = 90, CX = 110, CY = 110, CIRC = 2 * Math.PI * R;
+
+  function _pad(n) { return String(n).padStart(2,'0'); }
+  function _fmt(s) { return `${_pad(Math.floor(s/60))}:${_pad(s%60)}`; }
+  function _ringColor(ratio) { return ratio > 0.5 ? '#22c55e' : ratio > 0.25 ? '#f59e0b' : '#ef4444'; }
+
+  function _updateUI() {
+    const ratio  = _remaining / _totalSecs;
+    const offset = CIRC * (1 - ratio);
+    const ring    = document.getElementById('fm-ring');
+    const timeEl  = document.getElementById('fm-time');
+    const btn     = document.getElementById('fm-start');
+    const sessEl  = document.getElementById('fm-sessions');
+    if (ring)   { ring.setAttribute('stroke-dashoffset', offset); ring.setAttribute('stroke', _ringColor(ratio)); }
+    if (timeEl)  timeEl.textContent = _fmt(_remaining);
+    if (btn)     btn.innerHTML = _running
+      ? '<i class="fa-solid fa-pause"></i> Pause'
+      : `<i class="fa-solid fa-play"></i> ${_remaining < _totalSecs ? 'Resume' : 'Start'}`;
+    if (sessEl) sessEl.textContent = `${_sessions} session${_sessions !== 1 ? 's' : ''} completed`;
+  }
+
+  async function _onComplete() {
+    clearInterval(_interval); _interval = null; _running = false;
+    _sessions++; _remaining = 0; _updateUI();
+
+    // Auto-log time
+    const mins = Math.round(_totalSecs / 60);
+    const today = new Date().toISOString().split('T')[0];
+    try {
+      const isManager = state.user?.role === 'manager';
+      if (_task?.id) {
+        const logFn = isManager ? api.manager.addTimeLog : api.employee.addTimeLog;
+        if (logFn) await logFn(_task.id, { minutes: mins, description: 'Pomodoro session', logged_date: today });
+      }
+      showToast(`🍅 Session done! ${mins} min logged.`, 'success');
+    } catch (e) { showToast(`Session done! Could not log time: ${e.message}`, 'warning'); }
+
+    // Soft beep
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator(); const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.type = 'sine'; osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
+      osc.start(); osc.stop(ctx.currentTime + 1.2);
+    } catch {}
+
+    document.getElementById('fm-complete-banner')?.classList.remove('hidden');
+    setTimeout(() => document.getElementById('fm-complete-banner')?.classList.add('hidden'), 4000);
+  }
+
+  const pub = {
+    _kbHandler: null,
+
+    open(task) {
+      if (document.getElementById('focus-mode-overlay')) return;
+      _task = task; _sessions = 0; _remaining = _totalSecs; _running = false;
+      const safeTitle = typeof escHtml === 'function' ? escHtml(task.title || '') : (task.title || '');
+
+      const overlay = document.createElement('div');
+      overlay.id = 'focus-mode-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:linear-gradient(145deg,#0f172a 0%,#1e1b4b 100%)';
+      overlay.innerHTML = `
+        <div style="text-align:center;max-width:420px;width:100%;padding:32px 24px;color:#fff">
+
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+            <span style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#a5b4fc">
+              <i class="fa-solid fa-crosshairs"></i> Focus Mode
+            </span>
+            <button onclick="FocusMode.close()"
+              style="background:rgba(255,255,255,0.1);border:none;color:#94a3b8;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:600"
+              onmouseover="this.style.background='rgba(255,255,255,0.18)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">
+              <i class="fa-solid fa-xmark"></i> Exit
+            </button>
+          </div>
+
+          <div style="font-size:17px;font-weight:700;color:#f1f5f9;margin-bottom:28px;line-height:1.35;
+                      overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">
+            ${safeTitle}
+          </div>
+
+          <!-- Timer ring -->
+          <div style="position:relative;display:inline-block;margin-bottom:24px">
+            <svg width="220" height="220" viewBox="0 0 220 220">
+              <circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="12"/>
+              <circle id="fm-ring" cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="#22c55e" stroke-width="12"
+                stroke-linecap="round" stroke-dasharray="${CIRC.toFixed(2)}" stroke-dashoffset="0"
+                transform="rotate(-90 ${CX} ${CY})" style="transition:stroke-dashoffset 0.9s ease,stroke 0.4s ease"/>
+            </svg>
+            <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
+              <div id="fm-time" style="font-size:48px;font-weight:800;color:#f1f5f9;font-variant-numeric:tabular-nums;letter-spacing:-2px">25:00</div>
+              <div id="fm-sessions" style="font-size:12px;color:#64748b;margin-top:4px">0 sessions completed</div>
+            </div>
+          </div>
+
+          <div id="fm-complete-banner" class="hidden"
+            style="margin-bottom:16px;padding:10px 16px;background:linear-gradient(135deg,#065f46,#047857);border-radius:12px;font-size:13px;font-weight:600;color:#d1fae5">
+            🎉 Session complete! Time auto-logged.
+          </div>
+
+          <!-- Duration presets -->
+          <div style="display:flex;gap:8px;justify-content:center;margin-bottom:22px">
+            ${[25,10,5].map(m => `
+              <button id="fm-dur-${m}" onclick="FocusMode.setDuration(${m})"
+                style="flex:1;padding:9px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.15s;
+                       border:2px solid ${_totalSecs===m*60?'#818cf8':'transparent'};
+                       background:${_totalSecs===m*60?'#6366f1':'rgba(255,255,255,0.08)'};
+                       color:${_totalSecs===m*60?'#fff':'#94a3b8'}">
+                ${m} min
+              </button>`).join('')}
+          </div>
+
+          <!-- Controls -->
+          <div style="display:flex;gap:10px;justify-content:center;margin-bottom:20px">
+            <button id="fm-start" onclick="FocusMode.toggle()"
+              style="flex:1;max-width:160px;padding:13px 24px;background:linear-gradient(135deg,#6366f1,#3b82f6);
+                     color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;
+                     display:flex;align-items:center;justify-content:center;gap:8px;
+                     box-shadow:0 4px 14px rgba(99,102,241,0.4)">
+              <i class="fa-solid fa-play"></i> Start
+            </button>
+            <button onclick="FocusMode.reset()"
+              style="padding:13px 20px;background:rgba(255,255,255,0.08);color:#94a3b8;border:none;
+                     border-radius:12px;font-size:14px;font-weight:600;cursor:pointer"
+              onmouseover="this.style.background='rgba(255,255,255,0.14)'" onmouseout="this.style.background='rgba(255,255,255,0.08)'">
+              <i class="fa-solid fa-rotate-left"></i> Reset
+            </button>
+          </div>
+
+          <div style="font-size:12px;color:#475569">
+            <kbd style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:2px 7px">Space</kbd>
+            start/pause &nbsp;·&nbsp;
+            <kbd style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:2px 7px">Esc</kbd>
+            exit
+          </div>
+        </div>`;
+
+      document.body.appendChild(overlay);
+      _updateUI();
+
+      pub._kbHandler = (e) => {
+        if (e.key === ' ' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') {
+          e.preventDefault(); pub.toggle();
+        }
+        if (e.key === 'Escape') pub.close();
+      };
+      document.addEventListener('keydown', pub._kbHandler);
+    },
+
+    close() {
+      clearInterval(_interval); _interval = null; _running = false;
+      document.getElementById('focus-mode-overlay')?.remove();
+      if (pub._kbHandler) { document.removeEventListener('keydown', pub._kbHandler); pub._kbHandler = null; }
+    },
+
+    setDuration(mins) {
+      if (_running) return;
+      _totalSecs = mins * 60; _remaining = _totalSecs;
+      [25,10,5].forEach(m => {
+        const btn = document.getElementById(`fm-dur-${m}`);
+        if (!btn) return;
+        const active = m === mins;
+        btn.style.background = active ? '#6366f1' : 'rgba(255,255,255,0.08)';
+        btn.style.color      = active ? '#fff'    : '#94a3b8';
+        btn.style.border     = active ? '2px solid #818cf8' : '2px solid transparent';
+      });
+      _updateUI();
+    },
+
+    toggle() {
+      if (_remaining <= 0) { pub.reset(); return; }
+      _running = !_running;
+      if (_running) {
+        _interval = setInterval(() => { _remaining--; _updateUI(); if (_remaining <= 0) _onComplete(); }, 1000);
+      } else {
+        clearInterval(_interval); _interval = null;
+      }
+      _updateUI();
+    },
+
+    reset() {
+      clearInterval(_interval); _interval = null; _running = false; _remaining = _totalSecs;
+      _updateUI();
+      document.getElementById('fm-complete-banner')?.classList.add('hidden');
+    },
+  };
+
+  return pub;
+})();
+
+// ── Late Completion Prompt ────────────────────────────────────────────────────
+
+function isLateCompletion(stageName, dueDate) {
+  if (!dueDate) return false;
+  const n = (stageName || '').toLowerCase();
+  if (!n.includes('done') && !n.includes('complet') && !n.includes('closed')) return false;
+  // Compare date-only (strip time) so same-day doesn't count as late
+  return new Date(dueDate) < new Date(new Date().toDateString());
+}
+
+function promptLateCompletionReason(dueDate, onConfirm) {
+  const due = dueDate ? `Due date was <strong>${dueDate}</strong>.` : '';
+  openModal(`
+    <div class="p-6">
+      <div class="flex items-start gap-4 mb-5">
+        <div class="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 text-2xl"
+             style="background:#fef3c7">⏰</div>
+        <div>
+          <h2 class="text-lg font-bold text-gray-900">Task Completed Late</h2>
+          <p class="text-sm text-gray-500 mt-1">${due} Please provide a reason for the delay so your manager is kept informed.</p>
+        </div>
+      </div>
+      <div class="mb-5">
+        <label class="label">Reason for delay <span class="text-red-500">*</span></label>
+        <textarea id="delay-reason-input" class="input text-sm" rows="3"
+                  placeholder="e.g. Blocked waiting for client feedback, additional review rounds required…"
+                  oninput="document.getElementById('delay-reason-error').classList.add('hidden')"></textarea>
+        <p id="delay-reason-error" class="hidden mt-1.5 text-xs text-red-500 flex items-center gap-1">
+          <i class="fa-solid fa-circle-exclamation"></i> Please provide a reason before submitting.
+        </p>
+      </div>
+      <div class="flex justify-end gap-3">
+        <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn-primary" onclick="_submitLateReason()">
+          <i class="fa-solid fa-check"></i> Submit &amp; Mark Done
+        </button>
+      </div>
+    </div>`);
+
+  window._lateReasonCb = onConfirm;
+  setTimeout(() => document.getElementById('delay-reason-input')?.focus(), 60);
+}
+
+function _submitLateReason() {
+  const reason = document.getElementById('delay-reason-input')?.value?.trim();
+  if (!reason) {
+    document.getElementById('delay-reason-error')?.classList.remove('hidden');
+    return;
+  }
+  const cb = window._lateReasonCb;
+  window._lateReasonCb = null;
+  closeModal();
+  if (cb) cb(reason);
 }
 
 async function refreshNotifBadge() {

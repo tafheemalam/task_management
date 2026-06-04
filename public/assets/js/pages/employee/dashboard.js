@@ -657,32 +657,38 @@ async function empDrop(event, stageId) {
   if (idx < 0) return;
 
   const task = tasks[idx];
-  // No-op if dropped on same stage
   if (String(task.stage_id) === String(stageId)) return;
 
-  // Resolve stage display info for optimistic update
   const wf       = (window._empWorkflows || []).find(w => w.id == task.workflow_id);
   const newStage = stageId ? (wf?.stages || []).find(s => s.id == stageId) : null;
 
-  const prev = { stage_id: task.stage_id, stage_name: task.stage_name, stage_color: task.stage_color };
+  const applyMove = async (reason) => {
+    const prev = { stage_id: task.stage_id, stage_name: task.stage_name, stage_color: task.stage_color };
 
-  // Optimistic update
-  window._empTasksAll[idx] = {
-    ...task,
-    stage_id:    stageId        ?? null,
-    stage_name:  newStage?.name  ?? null,
-    stage_color: newStage?.color ?? null,
-  };
-  filterEmpTasks();
-
-  try {
-    await api.employee.updateStage(taskId, stageId);
-    showToast(newStage ? `Moved to "${newStage.name}"` : 'Stage updated');
-  } catch (err) {
-    // Roll back on failure (e.g. task was already Done)
-    window._empTasksAll[idx] = { ...task, ...prev };
+    // Optimistic update
+    window._empTasksAll[idx] = {
+      ...task,
+      stage_id:    stageId        ?? null,
+      stage_name:  newStage?.name  ?? null,
+      stage_color: newStage?.color ?? null,
+    };
     filterEmpTasks();
-    showToast(err.message, 'error');
+
+    try {
+      await api.employee.updateStage(taskId, stageId);
+      if (reason) await api.employee.addComment(taskId, `⏰ **Delay reason:** ${reason}`);
+      showToast(newStage ? `Moved to "${newStage.name}"` : 'Stage updated');
+    } catch (err) {
+      window._empTasksAll[idx] = { ...task, ...prev };
+      filterEmpTasks();
+      showToast(err.message, 'error');
+    }
+  };
+
+  if (isLateCompletion(newStage?.name, task.due_date)) {
+    promptLateCompletionReason(task.due_date, applyMove);
+  } else {
+    await applyMove(null);
   }
 }
 

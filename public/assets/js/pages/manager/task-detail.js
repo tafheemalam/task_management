@@ -63,6 +63,7 @@ async function loadTaskDetail(taskId) {
     renderTaskDetail();
     loadAndRenderActivityLog(taskId);
     loadTimeLogs(taskId);
+    loadKudos(taskId);
     initMentionAutocomplete('new-comment', _currentUsers);
   } catch (err) {
     document.getElementById('task-detail-content').innerHTML =
@@ -72,76 +73,89 @@ async function loadTaskDetail(taskId) {
 
 function renderTaskDetail() {
   const task         = _currentTask;
-  const workflows    = _currentWorkflows;
-  const companyUsers = _currentUsers;
   const lock         = taskLockState(task.stage_name);
 
   const stageOptions = (task.workflow_stages || []).map(s =>
     `<option value="${s.id}" ${task.stage_id == s.id ? 'selected' : ''}>${s.name}</option>`
   ).join('');
 
+  const sectionLabel = (color, icon, label) => `
+    <div class="flex items-center gap-2 mb-3 px-1">
+      <div class="w-1 h-4 rounded-full" style="background:${color}"></div>
+      <i class="${icon} text-xs" style="color:${color}"></i>
+      <span class="text-xs font-bold uppercase tracking-widest" style="color:#94a3b8">${label}</span>
+    </div>`;
+
   document.getElementById('task-detail-content').innerHTML = `
     ${lock.isClosed ? `
-    <div class="mb-4 flex items-center gap-3 px-5 py-3.5 rounded-xl text-sm font-medium bg-gray-900 text-gray-100">
+    <div class="mb-5 flex items-center gap-3 px-5 py-3.5 rounded-xl text-sm font-medium bg-gray-900 text-gray-100">
       <i class="fa-solid fa-lock text-gray-400"></i>
       <span>This task is <strong>Closed</strong> — no further changes can be made.</span>
     </div>` : ''}
     ${lock.isDone ? `
-    <div class="mb-4 flex items-center gap-3 px-5 py-3.5 rounded-xl text-sm font-medium bg-amber-50 border border-amber-200 text-amber-800">
+    <div class="mb-5 flex items-center gap-3 px-5 py-3.5 rounded-xl text-sm font-medium bg-amber-50 border border-amber-200 text-amber-800">
       <i class="fa-solid fa-circle-check text-amber-500"></i>
-      <span>This task is <strong>Done</strong> — subtasks, checklist, attachments and comments are locked. Move it back to unlock.</span>
+      <span>This task is <strong>Done</strong> — checklist, attachments and comments are locked. Move it back to unlock.</span>
     </div>` : ''}
-    <div class="grid lg:grid-cols-3 gap-5">
+
+    <div class="grid lg:grid-cols-3 gap-6">
 
       <!-- ── Main ─────────────────────────────────────────────── -->
-      <div class="lg:col-span-2 space-y-4">
+      <div class="lg:col-span-2 space-y-6">
 
-        <!-- Header card -->
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-          <div class="flex items-start justify-between gap-4 mb-4">
-            <div class="flex-1 min-w-0">
-              <h1 class="text-xl font-bold text-gray-900 leading-snug mb-2">${escHtml(task.title || '(no title)')}</h1>
-              <div class="flex flex-wrap items-center gap-2">
-                ${priorityBadge(task.priority)}
-                ${stageBadge(task.stage_name, task.stage_color)}
-                ${task.recurrence_rule && task.recurrence_rule !== 'none' ? `
-                  <span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-purple-100 text-purple-700">
-                    <i class="fa-solid fa-rotate"></i> Repeats ${task.recurrence_rule}
-                  </span>` : ''}
-                <span class="text-xs text-gray-400">
-                  <i class="fa-solid fa-user-pen mr-1"></i>by ${escHtml(task.creator_name || 'Unknown')}
-                </span>
-              </div>
+        <!-- ▸ HEADER CARD -->
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div class="p-6 pb-5">
+            <!-- badges row -->
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+              ${priorityBadge(task.priority)}
+              ${stageBadge(task.stage_name, task.stage_color)}
+              ${task.recurrence_rule && task.recurrence_rule !== 'none' ? `
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-medium bg-purple-100 text-purple-700">
+                  <i class="fa-solid fa-rotate"></i> Repeats ${task.recurrence_rule}
+                </span>` : ''}
+              <span class="ml-auto text-xs text-gray-400">
+                <i class="fa-solid fa-user-pen mr-1"></i>by ${escHtml(task.creator_name || 'Unknown')}
+              </span>
             </div>
-            <div class="flex items-center gap-2 shrink-0 flex-wrap">
-              ${!lock.isClosed ? `
-              <button class="btn-secondary text-xs" onclick="openEditTaskModal()">
-                <i class="fa-solid fa-pen"></i> Edit
-              </button>
-              <button class="btn-secondary text-xs" onclick="duplicateTask(${task.id})">
-                <i class="fa-solid fa-copy"></i> Duplicate
-              </button>
-              <button class="btn-secondary text-xs" onclick="saveCurrentTaskAsTemplate(${task.id})">
-                <i class="fa-solid fa-wand-magic-sparkles"></i> Save as Template
-              </button>` : ''}
-              <button class="btn-danger text-xs" onclick="deleteTaskFromDetail(${task.id})">
-                <i class="fa-solid fa-trash"></i>
-              </button>
+            <!-- Title — full width, no competing siblings -->
+            <h1 class="text-2xl font-bold text-gray-900 leading-tight mb-4">${escHtml(task.title || '(no title)')}</h1>
+            <!-- Description -->
+            <div class="text-sm text-gray-600 leading-relaxed">
+              ${task.description
+                ? escHtml(task.description).replace(/\n/g, '<br>')
+                : '<em class="text-gray-400">No description provided</em>'}
             </div>
           </div>
-          <div class="text-sm text-gray-600 leading-relaxed">
-            ${task.description
-              ? escHtml(task.description).replace(/\n/g, '<br>')
-              : '<em class="text-gray-400">No description provided</em>'}
+          <!-- Action toolbar — separated visually -->
+          <div class="px-6 py-3 flex items-center gap-2 flex-wrap" style="background:#f8fafc;border-top:1px solid #f1f5f9">
+            <button class="btn-secondary text-xs" onclick="FocusMode.open(_currentTask)"
+                    title="Start a Pomodoro focus session"
+                    style="border-color:#6366f1;color:#6366f1">
+              <i class="fa-solid fa-crosshairs"></i> Focus
+            </button>
+            ${!lock.isClosed ? `
+            <button class="btn-secondary text-xs" onclick="openEditTaskModal()">
+              <i class="fa-solid fa-pen"></i> Edit
+            </button>
+            <button class="btn-secondary text-xs" onclick="duplicateTask(${task.id})">
+              <i class="fa-solid fa-copy"></i> Duplicate
+            </button>
+            <button class="btn-secondary text-xs" onclick="saveCurrentTaskAsTemplate(${task.id})">
+              <i class="fa-solid fa-wand-magic-sparkles"></i> Template
+            </button>` : ''}
+            <span class="flex-1"></span>
+            <button class="btn-danger text-xs" onclick="deleteTaskFromDetail(${task.id})">
+              <i class="fa-solid fa-trash"></i> Delete
+            </button>
           </div>
         </div>
 
-        <!-- Stage mover (quick pill buttons) -->
-        ${lock.isClosed ? '' : (task.workflow_stages || []).length ? `
+        <!-- ▸ SECTION: PROGRESS -->
+        ${!lock.isClosed && (task.workflow_stages || []).length ? `
+        <div>
+          ${sectionLabel('#3b82f6', 'fa-solid fa-arrows-left-right', 'Progress')}
           <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <div class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <i class="fa-solid fa-arrows-left-right text-blue-500"></i> Move to Stage
-            </div>
             <div class="flex flex-wrap gap-2">
               ${(task.workflow_stages || []).map(s => `
                 <button onclick="moveStageFromDetail(${task.id}, ${s.id})"
@@ -153,237 +167,302 @@ function renderTaskDetail() {
                   ${escHtml(s.name)}
                 </button>`).join('')}
             </div>
-          </div>` : ''}
-
-        <!-- Checklist -->
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-          <div class="flex items-center justify-between mb-3">
-            <h3 class="font-semibold text-gray-800 flex items-center gap-2">
-              <i class="fa-solid fa-check-square text-indigo-500"></i> Checklist
-              <span class="text-xs text-gray-400 font-normal" id="checklist-count">(${(task.checklist || []).length})</span>
-            </h3>
           </div>
-          <div id="checklist-progress-wrap" class="${(task.checklist || []).length ? '' : 'hidden'} mb-3">
-            <div class="flex items-center gap-2 text-xs text-gray-500 mb-1">
-              <span id="checklist-progress-text">${checklistProgressText(task.checklist || [])}</span>
+        </div>` : ''}
+
+        <!-- ▸ SECTION: WORK -->
+        <div>
+          ${sectionLabel('#6366f1', 'fa-solid fa-list-check', 'Work')}
+          <div class="space-y-4">
+
+            <!-- Checklist -->
+            <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold text-gray-800 flex items-center gap-2">
+                  <i class="fa-solid fa-check-square text-indigo-500"></i> Checklist
+                  <span class="text-xs text-gray-400 font-normal" id="checklist-count">(${(task.checklist || []).length})</span>
+                </h3>
+              </div>
+              <div id="checklist-progress-wrap" class="${(task.checklist || []).length ? '' : 'hidden'} mb-3">
+                <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+                  <span id="checklist-progress-text">${checklistProgressText(task.checklist || [])}</span>
+                  <span class="text-indigo-600 font-semibold">${checklistPct(task.checklist || [])}%</span>
+                </div>
+                <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div id="checklist-progress-bar" class="h-full rounded-full transition-all"
+                       style="width:${checklistPct(task.checklist || [])}%;background:linear-gradient(90deg,#6366f1,#818cf8)"></div>
+                </div>
+              </div>
+              <div id="checklist-list" class="space-y-0.5 mb-3">
+                ${renderChecklistItems(task.checklist || [], task.id, lock.isDone || lock.isClosed)}
+              </div>
+              ${!lock.isDone && !lock.isClosed ? `
+              <div class="flex items-center gap-2 pt-2" style="border-top:1px solid #f8fafc">
+                <input type="text" id="new-checklist-item" class="input flex-1 text-sm" placeholder="Add checklist item…"
+                       onkeydown="if(event.key==='Enter'){addChecklistItem(${task.id});event.preventDefault();}" />
+                <button class="btn-secondary text-xs shrink-0" onclick="addChecklistItem(${task.id})">
+                  <i class="fa-solid fa-plus"></i> Add
+                </button>
+              </div>` : `<p class="text-xs text-gray-400 mt-2 italic"><i class="fa-solid fa-lock mr-1"></i>Checklist locked</p>`}
             </div>
-            <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-              <div id="checklist-progress-bar" class="h-full bg-indigo-500 rounded-full transition-all"
-                   style="width:${checklistPct(task.checklist || [])}%"></div>
+
+            <!-- Sub-Tasks -->
+            <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="font-semibold text-gray-800 flex items-center gap-2">
+                  <i class="fa-solid fa-bars-staggered text-indigo-500"></i> Sub-Tasks
+                  <span class="text-xs text-gray-400 font-normal">(${task.subtasks?.length || 0})</span>
+                </h3>
+                ${!lock.isDone && !lock.isClosed ? `
+                <button class="btn-secondary text-xs" onclick="openCreateSubtaskModal(${task.id})">
+                  <i class="fa-solid fa-plus"></i> Add Sub-Task
+                </button>` : ''}
+              </div>
+              <div id="subtasks-list">
+                ${task.subtasks?.length
+                  ? task.subtasks.map(s => `
+                      <div class="flex items-center gap-3 py-3 border-b border-gray-50 last:border-0">
+                        <div class="flex-1 min-w-0">
+                          <div class="text-sm font-medium text-gray-800 cursor-pointer hover:text-indigo-600 truncate"
+                               onclick="navigate('manager-task-detail',{id:${s.id}})">${escHtml(s.title)}</div>
+                          <div class="flex items-center gap-2 mt-1">
+                            ${priorityBadge(s.priority)}
+                            ${stageBadge(s.stage_name, s.stage_color)}
+                          </div>
+                        </div>
+                        <div class="text-xs text-gray-400 shrink-0">${escHtml(s.assignee_name || '—')}</div>
+                        <div class="text-xs text-gray-400 shrink-0">${formatDate(s.due_date)}</div>
+                      </div>`).join('')
+                  : `<div class="flex flex-col items-center py-8 text-center">
+                       <i class="fa-solid fa-bars-staggered text-2xl text-gray-200 mb-2"></i>
+                       <p class="text-sm text-gray-400">No sub-tasks yet</p>
+                     </div>`}
+              </div>
             </div>
-          </div>
-          <div id="checklist-list" class="space-y-1 mb-3">
-            ${renderChecklistItems(task.checklist || [], task.id, lock.isDone || lock.isClosed)}
-          </div>
-          ${!lock.isDone && !lock.isClosed ? `
-          <div class="flex items-center gap-2">
-            <input type="text" id="new-checklist-item" class="input flex-1 text-sm" placeholder="Add checklist item…"
-                   onkeydown="if(event.key==='Enter'){addChecklistItem(${task.id});event.preventDefault();}" />
-            <button class="btn-secondary text-xs shrink-0" onclick="addChecklistItem(${task.id})">
-              <i class="fa-solid fa-plus"></i> Add
-            </button>
-          </div>` : `<p class="text-xs text-gray-400 mt-2 italic"><i class="fa-solid fa-lock mr-1"></i>Checklist locked</p>`}
-        </div>
 
-        <!-- Subtasks (child tasks) -->
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-gray-800 flex items-center gap-2">
-              <i class="fa-solid fa-bars-staggered text-indigo-500"></i> Sub-Tasks
-              <span class="text-xs text-gray-400 font-normal">(${task.subtasks?.length || 0})</span>
-            </h3>
-            ${!lock.isDone && !lock.isClosed ? `
-            <button class="btn-secondary text-xs" onclick="openCreateSubtaskModal(${task.id})">
-              <i class="fa-solid fa-plus"></i> Add Sub-Task
-            </button>` : ''}
-          </div>
-          <div id="subtasks-list">
-            ${task.subtasks?.length
-              ? task.subtasks.map(s => `
-                  <div class="flex items-center gap-3 py-3 border-b border-gray-50 last:border-0">
-                    <div class="flex-1 min-w-0">
-                      <div class="text-sm font-medium text-gray-800 cursor-pointer hover:text-indigo-600"
-                           onclick="navigate('manager-task-detail',{id:${s.id}})">${escHtml(s.title)}</div>
-                      <div class="flex items-center gap-2 mt-1">
-                        ${priorityBadge(s.priority)}
-                        ${stageBadge(s.stage_name, s.stage_color)}
-                      </div>
-                    </div>
-                    <div class="text-xs text-gray-400">${escHtml(s.assignee_name || 'Unassigned')}</div>
-                    <div class="text-xs text-gray-400">${formatDate(s.due_date)}</div>
-                  </div>`).join('')
-              : `<div class="flex flex-col items-center py-8 text-center">
-                   <i class="fa-solid fa-bars-staggered text-2xl text-gray-200 mb-2"></i>
-                   <p class="text-sm text-gray-400">No sub-tasks yet</p>
-                 </div>`}
           </div>
         </div>
 
-        <!-- Attachments -->
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-gray-800 flex items-center gap-2">
-              <i class="fa-solid fa-paperclip text-blue-500"></i> Attachments
-              <span class="text-xs text-gray-400 font-normal">(${task.attachments?.length || 0})</span>
-            </h3>
-            ${!lock.isDone && !lock.isClosed ? `
-            <label class="btn-secondary text-xs cursor-pointer">
-              <i class="fa-solid fa-arrow-up-from-bracket"></i> Upload
-              <input type="file" multiple class="hidden" onchange="uploadMgrAttachments(${task.id}, this)" />
-            </label>` : ''}
-          </div>
-          <div id="mgr-attachments-list" class="space-y-2">
-            ${(task.attachments || []).length
-              ? (task.attachments || []).map(a => `
-                  <div class="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg group" data-attach-id="${a.id}">
-                    <div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0 text-blue-500">
-                      ${attachmentIcon(a.mime_type)}
-                    </div>
-                    <div class="flex-1 min-w-0">
-                      <a href="/uploads/attachments/${a.filename}" target="_blank" download="${escHtml(a.original_name)}"
-                         class="text-sm font-medium text-gray-800 hover:text-blue-600 truncate block">${escHtml(a.original_name)}</a>
-                      <div class="text-xs text-gray-400">${formatFileSize(a.file_size)} · ${formatDateTime(a.created_at)} · ${escHtml(a.uploader_name)}</div>
-                    </div>
-                    ${!lock.isDone && !lock.isClosed ? `
-                    <button onclick="deleteMgrAttachment(${task.id}, ${a.id}, this)"
-                            class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs transition-opacity p-1">
-                      <i class="fa-solid fa-trash"></i>
-                    </button>` : ''}
-                  </div>`).join('')
-              : '<p class="text-sm text-gray-400 text-center py-4">No attachments yet</p>'}
-          </div>
-        </div>
+        <!-- ▸ SECTION: COLLABORATION -->
+        <div>
+          ${sectionLabel('#f97316', 'fa-solid fa-comments', 'Collaboration')}
+          <div class="space-y-4">
 
-        <!-- Comments -->
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-          <h3 class="font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <i class="fa-solid fa-comments text-orange-500"></i> Comments
-            <span class="text-xs text-gray-400 font-normal">(${task.comments?.length || 0})</span>
-          </h3>
-          <div id="comments-list" class="space-y-4 mb-5">
-            ${task.comments?.length
-              ? task.comments.map(c => commentHtml(c)).join('')
-              : '<p class="text-center text-sm text-gray-400 py-4">No comments yet</p>'}
-          </div>
-          ${!lock.isDone && !lock.isClosed ? `
-          <div class="flex gap-3">
-            <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
-              ${avatarInitials(state.user?.name)}
+            <!-- Comments -->
+            <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+              <h3 class="font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                <i class="fa-solid fa-comments text-orange-500"></i> Comments
+                <span class="text-xs text-gray-400 font-normal">(${task.comments?.length || 0})</span>
+              </h3>
+              <div id="comments-list" class="space-y-4 mb-5">
+                ${task.comments?.length
+                  ? task.comments.map(c => commentHtml(c)).join('')
+                  : '<p class="text-center text-sm text-gray-400 py-4">No comments yet</p>'}
+              </div>
+              ${!lock.isDone && !lock.isClosed ? `
+              <div class="flex gap-3 pt-4" style="border-top:1px solid #f1f5f9">
+                <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                  ${avatarInitials(state.user?.name)}
+                </div>
+                <div class="flex-1">
+                  <textarea id="new-comment" class="input text-sm" rows="2" placeholder="Write a comment… Use @name to mention someone"></textarea>
+                  <button class="btn-primary text-xs mt-2" onclick="submitComment(${task.id})">
+                    <i class="fa-solid fa-paper-plane"></i> Post Comment
+                  </button>
+                </div>
+              </div>` : `<p class="text-xs text-gray-400 italic"><i class="fa-solid fa-lock mr-1"></i>Comments locked</p>`}
             </div>
-            <div class="flex-1">
-              <textarea id="new-comment" class="input text-sm" rows="2" placeholder="Write a comment…"></textarea>
-              <button class="btn-primary text-xs mt-2" onclick="submitComment(${task.id})">
-                <i class="fa-solid fa-paper-plane"></i> Post
-              </button>
+
+            <!-- Attachments -->
+            <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="font-semibold text-gray-800 flex items-center gap-2">
+                  <i class="fa-solid fa-paperclip text-blue-500"></i> Attachments
+                  <span class="text-xs text-gray-400 font-normal">(${task.attachments?.length || 0})</span>
+                </h3>
+                ${!lock.isDone && !lock.isClosed ? `
+                <label class="btn-secondary text-xs cursor-pointer">
+                  <i class="fa-solid fa-arrow-up-from-bracket"></i> Upload
+                  <input type="file" multiple class="hidden" onchange="uploadMgrAttachments(${task.id}, this)" />
+                </label>` : ''}
+              </div>
+              <div id="mgr-attachments-list" class="space-y-2">
+                ${(task.attachments || []).length
+                  ? (task.attachments || []).map(a => `
+                      <div class="flex items-center gap-3 p-3 bg-gray-50 rounded-xl group" data-attach-id="${a.id}">
+                        <div class="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center shrink-0 text-blue-500">
+                          ${attachmentIcon(a.mime_type)}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                          <a href="/uploads/attachments/${a.filename}" target="_blank" download="${escHtml(a.original_name)}"
+                             class="text-sm font-medium text-gray-800 hover:text-blue-600 truncate block">${escHtml(a.original_name)}</a>
+                          <div class="text-xs text-gray-400 mt-0.5">${formatFileSize(a.file_size)} · ${formatDateTime(a.created_at)} · ${escHtml(a.uploader_name)}</div>
+                        </div>
+                        ${!lock.isDone && !lock.isClosed ? `
+                        <button onclick="deleteMgrAttachment(${task.id}, ${a.id}, this)"
+                                class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs transition-opacity p-1">
+                          <i class="fa-solid fa-trash"></i>
+                        </button>` : ''}
+                      </div>`).join('')
+                  : `<label class="flex flex-col items-center gap-2 py-8 text-center cursor-pointer rounded-xl border-2 border-dashed border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 transition-all">
+                       <i class="fa-solid fa-cloud-arrow-up text-2xl text-gray-300"></i>
+                       <span class="text-sm text-gray-400">Drop files or click to upload</span>
+                       ${!lock.isDone && !lock.isClosed ? `<input type="file" multiple class="hidden" onchange="uploadMgrAttachments(${task.id}, this)" />` : ''}
+                     </label>`}
+              </div>
             </div>
-          </div>` : `<p class="text-xs text-gray-400 italic"><i class="fa-solid fa-lock mr-1"></i>Comments locked</p>`}
-        </div>
 
-        <!-- Time Tracking -->
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-gray-800 flex items-center gap-2">
-              <i class="fa-solid fa-clock text-indigo-500"></i> Time Tracking
-            </h3>
-            <button class="btn-secondary text-xs" onclick="openLogTimeModal(${task.id})">
-              <i class="fa-solid fa-plus"></i> Log Time
-            </button>
-          </div>
-          <div id="time-logs-list">
-            <div class="text-sm text-gray-400 text-center py-4">Loading…</div>
           </div>
         </div>
 
-        <!-- Activity Log -->
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-          <h3 class="font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <i class="fa-solid fa-clock-rotate-left text-gray-400"></i> Activity
-          </h3>
-          <div id="activity-log-list">
-            <div class="text-sm text-gray-400 text-center py-4">Loading…</div>
+        <!-- ▸ SECTION: TRACKING -->
+        <div>
+          ${sectionLabel('#10b981', 'fa-solid fa-clock', 'Tracking')}
+          <div class="space-y-4">
+
+            <!-- Time Tracking -->
+            <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="font-semibold text-gray-800 flex items-center gap-2">
+                  <i class="fa-solid fa-stopwatch text-emerald-500"></i> Time Tracking
+                </h3>
+                <button class="btn-secondary text-xs" onclick="openLogTimeModal(${task.id})">
+                  <i class="fa-solid fa-plus"></i> Log Time
+                </button>
+              </div>
+              <div id="time-logs-list">
+                <div class="text-sm text-gray-400 text-center py-4">Loading…</div>
+              </div>
+            </div>
+
+            <!-- Activity Log -->
+            <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+              <h3 class="font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                <i class="fa-solid fa-clock-rotate-left text-gray-400"></i> Activity
+              </h3>
+              <div id="activity-log-list">
+                <div class="text-sm text-gray-400 text-center py-4">Loading…</div>
+              </div>
+            </div>
+
           </div>
         </div>
       </div>
 
       <!-- ── Sidebar ────────────────────────────────────────────── -->
       <div class="space-y-4">
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h3 class="text-sm font-semibold text-gray-700 mb-4">Task Details</h3>
-          <div class="space-y-3 text-sm">
 
+        <!-- Task Details -->
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div class="px-5 py-3.5 flex items-center gap-2" style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);border-bottom:1px solid #e2e8f0">
+            <i class="fa-solid fa-circle-info text-indigo-400 text-xs"></i>
+            <h3 class="text-sm font-bold text-gray-700">Task Details</h3>
+          </div>
+          <div class="p-5 space-y-3 text-sm">
             ${!lock.isClosed ? `
             <div>
-              <span class="text-xs text-gray-400 uppercase tracking-wider">Stage</span>
-              <div class="mt-1">
-                <select class="input text-xs" onchange="moveStageFromDetail(${task.id}, this.value)">
-                  <option value="">No stage</option>
-                  ${stageOptions}
-                </select>
-              </div>
+              <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Stage</div>
+              <select class="input text-xs" onchange="moveStageFromDetail(${task.id}, this.value)">
+                <option value="">No stage</option>
+                ${stageOptions}
+              </select>
             </div>` : ''}
-
             ${detailRow('Priority', priorityBadge(task.priority))}
-            ${detailRow('Assignee', `<span class="font-medium text-gray-800">${escHtml(task.assignee_name || '—')}</span>`)}
+            ${detailRow('Assignee', `<span class="font-semibold text-gray-800">${escHtml(task.assignee_name || '—')}</span>`)}
             ${detailRow('Start Date', `<span class="text-gray-700">${formatDate(task.start_date)}</span>`)}
             ${detailRow('Due Date', `<span class="${isOverdue(task.due_date) ? 'text-red-600 font-semibold' : 'text-gray-700'}">${formatDate(task.due_date)}</span>`)}
-            ${detailRow('Workflow', `<span class="text-gray-700">${escHtml(task.workflow_name || '—')}</span>`)}
+            ${detailRow('Project', `<span class="text-gray-700 text-right">${escHtml(task.workflow_name || '—')}</span>`)}
             ${detailRow('Created', `<span class="text-gray-500">${formatDate(task.created_at)}</span>`)}
-            ${detailRow('Creator', `<span class="text-gray-700">${escHtml(task.creator_name || '—')}</span>`)}
-            ${detailRow('Time Logged', `<span id="total-time-display" class="font-medium text-gray-700">—</span>`)}
+            ${detailRow('Time Logged', `<span id="total-time-display" class="font-semibold text-gray-700">—</span>`)}
+          </div>
+        </div>
 
-            <!-- Tags -->
-            <div class="pt-2">
-              <div class="text-xs text-gray-400 uppercase tracking-wider mb-2">Tags</div>
-              <div class="flex flex-wrap gap-1.5 mb-2" id="task-tags-display">
-                ${(task.tags || []).map(t => tagBadge(t)).join('') || '<span class="text-xs text-gray-400">No tags</span>'}
-              </div>
-              <button onclick="openTagManager(${task.id})" class="text-xs text-blue-600 hover:underline flex items-center gap-1">
-                <i class="fa-solid fa-tag"></i> Manage tags
-              </button>
+        <!-- Tags -->
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div class="px-5 py-3.5 flex items-center justify-between" style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);border-bottom:1px solid #e2e8f0">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-tags text-blue-400 text-xs"></i>
+              <h3 class="text-sm font-bold text-gray-700">Tags</h3>
             </div>
+            <button onclick="openTagManager(${task.id})" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">
+              <i class="fa-solid fa-pen text-[10px]"></i> Manage
+            </button>
+          </div>
+          <div class="p-4">
+            <div class="flex flex-wrap gap-1.5" id="task-tags-display">
+              ${(task.tags || []).map(t => tagBadge(t)).join('') || '<span class="text-xs text-gray-400 italic">No tags yet</span>'}
+            </div>
+          </div>
+        </div>
 
-            <!-- Dependencies -->
-            <div class="pt-3 mt-1" style="border-top:1px solid #f1f5f9">
-              <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  <i class="fa-solid fa-link mr-1"></i> Blocked By
-                </span>
-                <button onclick="openAddDependencyModal(${task.id})"
-                        class="text-xs text-indigo-600 hover:underline font-medium">+ Add</button>
-              </div>
-              <div id="deps-list">
-                ${(task.dependencies || []).length
-                  ? (task.dependencies || []).map(d => `
-                      <div class="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0 group">
-                        <div class="flex-1 min-w-0">
-                          <div class="text-xs font-medium text-gray-700 truncate">${escHtml(d.title)}</div>
-                          <div class="mt-0.5">${stageBadge(d.stage_name, d.stage_color)}</div>
-                        </div>
-                        <button onclick="removeDep(${task.id}, ${d.id})"
-                                class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity text-xs">
-                          <i class="fa-solid fa-xmark"></i>
-                        </button>
-                      </div>`).join('')
-                  : '<p class="text-xs text-gray-400 italic">No blockers</p>'}
-              </div>
+        <!-- Blocked By -->
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div class="px-5 py-3.5 flex items-center justify-between" style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);border-bottom:1px solid #e2e8f0">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-link text-rose-400 text-xs"></i>
+              <h3 class="text-sm font-bold text-gray-700">Blocked By</h3>
+            </div>
+            <button onclick="openAddDependencyModal(${task.id})" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">
+              <i class="fa-solid fa-plus text-[10px]"></i> Add
+            </button>
+          </div>
+          <div class="p-4">
+            <div id="deps-list">
+              ${(task.dependencies || []).length
+                ? (task.dependencies || []).map(d => `
+                    <div class="flex items-center gap-2 py-2 border-b border-gray-50 last:border-0 group">
+                      <div class="flex-1 min-w-0">
+                        <div class="text-xs font-medium text-gray-700 truncate">${escHtml(d.title)}</div>
+                        <div class="mt-0.5">${stageBadge(d.stage_name, d.stage_color)}</div>
+                      </div>
+                      <button onclick="removeDep(${task.id}, ${d.id})"
+                              class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity text-xs">
+                        <i class="fa-solid fa-xmark"></i>
+                      </button>
+                    </div>`).join('')
+                : '<p class="text-xs text-gray-400 italic">No blockers</p>'}
             </div>
           </div>
         </div>
 
         <!-- Custom Fields -->
         ${(task.custom_values || []).length ? `
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h3 class="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
-            <i class="fa-solid fa-sliders text-indigo-500"></i> Custom Fields
-          </h3>
-          <div class="space-y-3">
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div class="px-5 py-3.5 flex items-center gap-2" style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);border-bottom:1px solid #e2e8f0">
+            <i class="fa-solid fa-sliders text-indigo-400 text-xs"></i>
+            <h3 class="text-sm font-bold text-gray-700">Custom Fields</h3>
+          </div>
+          <div class="p-5 space-y-3">
             ${(task.custom_values || []).map(cv => `
               <div>
-                <label class="text-xs text-gray-400 uppercase tracking-wider block mb-1">
+                <label class="text-xs font-semibold text-gray-400 uppercase tracking-wider block mb-1.5">
                   ${escHtml(cv.name)} ${cv.is_required ? '<span class="text-red-400">*</span>' : ''}
                 </label>
                 ${renderCustomFieldInput(task.id, cv)}
               </div>`).join('')}
+          </div>
+        </div>` : ''}
+
+        <!-- Kudos -->
+        ${task.assignee_id ? `
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden" id="kudos-card">
+          <div class="px-5 py-3.5 flex items-center gap-2" style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border-bottom:1px solid #fde68a">
+            <span class="text-base leading-none">🎉</span>
+            <h3 class="text-sm font-bold text-amber-800">Kudos</h3>
+          </div>
+          <div class="p-4">
+            <div id="kudos-content" class="mb-3">
+              <div class="text-xs text-gray-400 text-center py-2">Loading…</div>
+            </div>
+            <div class="space-y-2" id="kudos-give-area">
+              <input type="text" id="kudos-msg" class="input text-xs"
+                     placeholder="Add a message (optional)…" maxlength="200" />
+              <button id="kudos-btn" onclick="submitKudos(${task.id})"
+                      class="w-full text-sm font-semibold py-2 rounded-xl transition-all"
+                      style="background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;border:1px solid #fcd34d">
+                🎉 Give Kudos to ${escHtml(task.assignee_name)}
+              </button>
+            </div>
           </div>
         </div>` : ''}
 
@@ -1243,4 +1322,69 @@ async function confirmSaveTaskTemplate(taskId) {
     await api.manager.saveTaskAsTemplate(taskId, { template_name: name });
     showToast('Saved as template!', 'success');
   } catch (err) { showToast(err.message, 'error'); }
+}
+
+// ── Kudos ─────────────────────────────────────────────────────────────────────
+
+async function loadKudos(taskId) {
+  const card = document.getElementById('kudos-content');
+  if (!card) return;
+  try {
+    const { kudos, has_given } = await api.manager.getTaskKudos(taskId);
+    renderKudosContent(kudos, has_given, taskId);
+  } catch (_) {
+    const el = document.getElementById('kudos-content');
+    if (el) el.innerHTML = '';
+  }
+}
+
+function renderKudosContent(kudos, hasGiven, taskId) {
+  const contentEl = document.getElementById('kudos-content');
+  const giveArea  = document.getElementById('kudos-give-area');
+  if (!contentEl) return;
+
+  if (!kudos.length) {
+    contentEl.innerHTML = `<p class="text-xs text-gray-400 italic text-center py-1">No kudos yet — be the first!</p>`;
+  } else {
+    contentEl.innerHTML = kudos.map(k => `
+      <div class="flex items-start gap-2 mb-2">
+        <div class="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0"
+             style="background:linear-gradient(135deg,#f97316,#f59e0b)">
+          ${avatarInitials(k.giver_name)}
+        </div>
+        <div class="flex-1 min-w-0">
+          <span class="text-xs font-semibold text-gray-700">${escHtml(k.giver_name)}</span>
+          <span class="text-[11px] text-gray-400 ml-1">${formatDateTime(k.created_at)}</span>
+          ${k.message ? `<p class="text-xs text-gray-600 mt-0.5 italic">"${escHtml(k.message)}"</p>` : ''}
+        </div>
+        <span class="text-base leading-none shrink-0">🎉</span>
+      </div>`).join('');
+  }
+
+  // Update button state
+  const btn = document.getElementById('kudos-btn');
+  if (btn && hasGiven) {
+    btn.disabled = true;
+    btn.textContent = '🎉 Kudos Given!';
+    btn.style.background = '#f0fdf4';
+    btn.style.color = '#16a34a';
+    btn.style.borderColor = '#86efac';
+    btn.style.cursor = 'not-allowed';
+  }
+}
+
+async function submitKudos(taskId) {
+  const btn     = document.getElementById('kudos-btn');
+  const message = document.getElementById('kudos-msg')?.value.trim() || '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    await api.manager.giveKudos(taskId, message);
+    if (document.getElementById('kudos-msg')) document.getElementById('kudos-msg').value = '';
+    const { kudos, has_given } = await api.manager.getTaskKudos(taskId);
+    renderKudosContent(kudos, has_given, taskId);
+    showToast('Kudos sent! 🎉', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '🎉 Give Kudos'; }
+  }
 }

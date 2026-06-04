@@ -31,6 +31,7 @@ require_once __DIR__ . '/controllers/WebhookController.php';
 require_once __DIR__ . '/controllers/ProfileController.php';
 require_once __DIR__ . '/controllers/ApiKeyController.php';
 require_once __DIR__ . '/controllers/PublicApiController.php';
+require_once __DIR__ . '/controllers/ClientShareController.php';
 require_once __DIR__ . '/config/stripe.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -52,6 +53,11 @@ try {
             if ($method === 'PATCH') { $ctrl->updateTask((int)$m[1]); exit; }
         }
         http_response_code(404); echo json_encode(['error' => 'Not found']); exit;
+    }
+
+    // Public client share route (no auth required)
+    if (preg_match('#^/share/([a-zA-Z0-9]{16,64})$#', $path, $m) && $method === 'GET') {
+        (new ClientShareController())->getShare($m[1]); exit;
     }
 
     // Auth routes
@@ -239,6 +245,28 @@ try {
     }
     if (preg_match('#^/manager/project-templates/(\d+)$#', $path, $m) && $method === 'DELETE') {
         (new ManagerController())->deleteProjectTemplate((int)$m[1]);
+        exit;
+    }
+
+    // Client Share routes (manager only)
+    if ($path === '/manager/client-shares' && $method === 'GET')  { (new ManagerController())->listShares(); exit; }
+    if ($path === '/manager/client-shares' && $method === 'POST') { (new ManagerController())->createShare(); exit; }
+    if (preg_match('#^/manager/client-shares/([a-zA-Z0-9]{16,64})$#', $path, $m) && $method === 'DELETE') {
+        (new ManagerController())->deleteShare($m[1]); exit;
+    }
+
+    // Kudos routes (manager + employee)
+    if (preg_match('#^/(manager|employee)/tasks/(\d+)/kudos$#', $path, $m)) {
+        $ctrl = $m[1] === 'manager' ? new ManagerController() : new EmployeeController();
+        match($method) {
+            'GET'  => $ctrl->getTaskKudos((int)$m[2]),
+            'POST' => $ctrl->giveKudos((int)$m[2]),
+            default => (function() { http_response_code(405); echo json_encode(['error' => 'Method not allowed']); })()
+        };
+        exit;
+    }
+    if ($path === '/manager/kudos/leaderboard' && $method === 'GET') {
+        (new ManagerController())->kudosLeaderboard();
         exit;
     }
 
