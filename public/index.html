@@ -6,7 +6,9 @@
   <title>TaskFlow — Project Management</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
+    if (localStorage.getItem('tm_dark') === '1') document.documentElement.classList.add('dark');
     if (window.tailwind) tailwind.config = {
+      darkMode: 'class',
       theme: {
         extend: {
           colors: {
@@ -85,6 +87,54 @@
     .cal-task:hover .cal-task-tip { display: block; }
     .mention-chip { background:#eef2ff;color:#6366f1;font-weight:600;padding:1px 5px;border-radius:4px;font-size:0.875em; }
     :root { --brand-primary: #6366f1; --brand-secondary: #3b82f6; }
+    /* ── Dark Mode ──────────────────────────────────────────────────────────── */
+    html.dark body { background: linear-gradient(145deg,#0f172a 0%,#1e293b 55%,#0a1628 100%) !important; }
+    html.dark .bg-white { background-color: #1e293b !important; }
+    html.dark .bg-gray-50 { background-color: #0f172a !important; }
+    html.dark .bg-gray-100 { background-color: #1e293b !important; }
+    html.dark .bg-gray-200 { background-color: #334155 !important; }
+    html.dark .text-gray-900 { color: #f1f5f9 !important; }
+    html.dark .text-gray-800 { color: #e2e8f0 !important; }
+    html.dark .text-gray-700 { color: #cbd5e1 !important; }
+    html.dark .text-gray-600 { color: #94a3b8 !important; }
+    html.dark .text-gray-500 { color: #64748b !important; }
+    html.dark .text-gray-400 { color: #475569 !important; }
+    html.dark .border-gray-100, html.dark .border-gray-200 { border-color: #334155 !important; }
+    html.dark .border-gray-300 { border-color: #475569 !important; }
+    html.dark .divide-gray-100 > * + *, html.dark .divide-gray-50 > * + * { border-color: #334155 !important; }
+    html.dark .card { background-color: #1e293b !important; border-color: #334155 !important; }
+    html.dark .modal-box { background-color: #1e293b !important; }
+    html.dark .modal-box .border-b, html.dark .modal-box .border-t, html.dark .modal-box .divide-y > * + * { border-color: #334155 !important; }
+    html.dark .input,
+    html.dark input:not([type="checkbox"]):not([type="radio"]),
+    html.dark select, html.dark textarea { background-color: #0f172a !important; border-color: #475569 !important; color: #e2e8f0 !important; }
+    html.dark input::placeholder, html.dark textarea::placeholder { color: #475569 !important; }
+    html.dark select option { background-color: #1e293b; color: #e2e8f0; }
+    html.dark input[required], html.dark select[required] { border-color: #7f1d1d !important; background-color: #1e293b !important; }
+    html.dark .btn-secondary { background-color: #1e293b !important; border-color: #475569 !important; color: #cbd5e1 !important; }
+    html.dark .btn-secondary:hover { background-color: #334155 !important; }
+    html.dark .task-card { background-color: #1e293b !important; border-color: #334155 !important; }
+    html.dark .task-card:hover { border-color: #6366f1 !important; }
+    html.dark .kanban-col { background-color: #0f172a !important; }
+    html.dark table thead tr { background-color: #0f172a !important; }
+    html.dark table thead th { color: #94a3b8 !important; }
+    html.dark table tbody td { color: #e2e8f0 !important; }
+    html.dark table tbody tr:hover td { background-color: #334155 !important; }
+    html.dark .skeleton { background: linear-gradient(90deg,#1e293b 25%,#334155 50%,#1e293b 75%) !important; background-size: 800px 100% !important; }
+    html.dark .bg-blue-50   { background-color: rgba(59,130,246,0.12) !important; }
+    html.dark .bg-green-50  { background-color: rgba(34,197,94,0.12) !important; }
+    html.dark .bg-purple-50 { background-color: rgba(168,85,247,0.12) !important; }
+    html.dark .bg-orange-50 { background-color: rgba(249,115,22,0.12) !important; }
+    html.dark .bg-red-50    { background-color: rgba(239,68,68,0.12) !important; }
+    html.dark .bg-indigo-50 { background-color: rgba(99,102,241,0.12) !important; }
+    html.dark .bg-yellow-50 { background-color: rgba(234,179,8,0.12) !important; }
+    html.dark .bg-amber-50  { background-color: rgba(245,158,11,0.12) !important; }
+    html.dark .bg-teal-50   { background-color: rgba(20,184,166,0.12) !important; }
+    html.dark .bg-pink-50   { background-color: rgba(236,72,153,0.12) !important; }
+    html.dark .hover\:bg-gray-50:hover  { background-color: #1e293b !important; }
+    html.dark .hover\:bg-gray-100:hover { background-color: #334155 !important; }
+    html.dark ::-webkit-scrollbar-track { background: #0f172a; }
+    html.dark ::-webkit-scrollbar-thumb { background: #475569; }
     @media print {
       aside, #modal-root, .btn-primary, .btn-secondary, .btn-danger,
       [onclick="openCommandPalette()"], #bulk-action-bar { display: none !important; }
@@ -100,8 +150,8 @@
 </head>
 <body>
   <div id="app"></div>
-  <script src="/assets/js/api.js?v=30"></script>
-  <script src="/assets/js/utils.js?v=33"></script>
+  <script src="/assets/js/api.js?v=34"></script>
+  <script src="/assets/js/utils.js?v=37"></script>
   <script src="/assets/js/pages/login.js?v=27"></script>
   <script src="/assets/js/pages/subscribe.js?v=27"></script>
   <script src="/assets/js/pages/admin/dashboard.js?v=27"></script>
@@ -111,14 +161,15 @@
   <script src="/assets/js/pages/admin/managers.js?v=27"></script>
   <script src="/assets/js/pages/admin/subscription-requests.js?v=27"></script>
   <script src="/assets/js/pages/manager/dashboard.js?v=27"></script>
-  <script src="/assets/js/pages/manager/users.js?v=27"></script>
+  <script src="/assets/js/pages/manager/users.js?v=28"></script>
   <script src="/assets/js/pages/manager/workflows.js?v=27"></script>
   <script src="/assets/js/pages/manager/tasks.js?v=31"></script>
-  <script src="/assets/js/pages/manager/task-detail.js?v=31"></script>
+  <script src="/assets/js/pages/manager/task-detail.js?v=32"></script>
   <script src="/assets/js/pages/employee/dashboard.js?v=32"></script>
-  <script src="/assets/js/pages/employee/task-detail.js?v=32"></script>
-  <script src="/assets/js/pages/manager/gantt.js?v=27"></script>
-  <script src="/assets/js/pages/shared/calendar.js?v=27"></script>
+  <script src="/assets/js/pages/employee/task-detail.js?v=33"></script>
+  <script src="/assets/js/pages/manager/gantt.js?v=29"></script>
+  <script src="/assets/js/pages/shared/calendar.js?v=28"></script>
+  <script src="/assets/js/pages/shared/accept-invitation.js?v=1"></script>
   <script src="/assets/js/pages/manager/time-report.js?v=27"></script>
   <script src="/assets/js/pages/manager/webhooks.js?v=27"></script>
   <script src="/assets/js/pages/shared/profile.js?v=27"></script>
@@ -127,7 +178,9 @@
   <script src="/assets/js/pages/manager/api-keys.js?v=27"></script>
   <script src="/assets/js/pages/manager/custom-fields.js?v=27"></script>
   <script src="/assets/js/pages/manager/workload.js?v=27"></script>
+  <script src="/assets/js/pages/manager/analytics.js?v=1"></script>
+  <script src="/assets/js/pages/manager/sprints.js?v=1"></script>
   <script src="/assets/js/pages/manager/task-templates.js?v=27"></script>
-  <script src="/assets/js/app.js?v=30"></script>
+  <script src="/assets/js/app.js?v=33"></script>
 </body>
 </html>

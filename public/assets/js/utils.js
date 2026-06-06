@@ -13,6 +13,17 @@ function showToast(msg, type = 'success') {
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3000);
 }
 
+function toggleDarkMode() {
+  const isDark = document.documentElement.classList.toggle('dark');
+  localStorage.setItem('tm_dark', isDark ? '1' : '0');
+  document.querySelectorAll('#dark-mode-icon').forEach(el => {
+    el.className = `fa-solid ${isDark ? 'fa-sun' : 'fa-moon'} w-4 text-center opacity-80`;
+  });
+  document.querySelectorAll('#dark-mode-label').forEach(el => {
+    el.textContent = isDark ? 'Light Mode' : 'Dark Mode';
+  });
+}
+
 function formatDate(d) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -266,6 +277,8 @@ function renderSidebar(role) {
     { icon: 'fa-clock', label: 'Time Report', page: 'manager-time-report' },
     { icon: 'fa-plug', label: 'Webhooks', page: 'manager-webhooks' },
     { icon: 'fa-chart-bar', label: 'Workload', page: 'manager-workload' },
+    { icon: 'fa-chart-line', label: 'Analytics', page: 'manager-analytics' },
+    { icon: 'fa-flag', label: 'Sprints', page: 'manager-sprints' },
     { icon: 'fa-key', label: 'API Keys', page: 'manager-api-keys' },
     { icon: 'fa-sliders', label: 'Custom Fields', page: 'manager-custom-fields' },
     { icon: 'fa-layer-group', label: 'Templates', page: 'manager-templates' },
@@ -349,6 +362,16 @@ function renderSidebar(role) {
           </div>
           <span>Notifications</span>
         </div>` : ''}
+
+        <!-- Dark mode toggle -->
+        <button onclick="toggleDarkMode()"
+                class="w-full text-left flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm transition-colors mb-0.5"
+                style="color:rgba(255,255,255,0.55)"
+                onmouseover="this.style.background='rgba(255,255,255,0.08)'"
+                onmouseout="this.style.background='transparent'">
+          <i id="dark-mode-icon" class="fa-solid ${document.documentElement.classList.contains('dark') ? 'fa-sun' : 'fa-moon'} w-4 text-center opacity-80"></i>
+          <span id="dark-mode-label">${document.documentElement.classList.contains('dark') ? 'Light Mode' : 'Dark Mode'}</span>
+        </button>
 
         <!-- Sign out -->
         <button onclick="logout()"
@@ -1115,6 +1138,153 @@ function _submitLateReason() {
   window._lateReasonCb = null;
   closeModal();
   if (cb) cb(reason);
+}
+
+// ── @mention Autocomplete ─────────────────────────────────────────────────────
+
+function setupMentionAutocomplete(textarea, users) {
+  if (!textarea) return;
+
+  // Always include @all as first option
+  const allOption = { id: 'all', name: 'all', label: 'all — notify everyone', isAll: true };
+  const userOptions = (users || []).map(u => ({ id: u.id, name: u.name, label: u.name }));
+  const options = [allOption, ...userOptions];
+
+  // Floating dropdown element
+  let dropdown = null;
+  let activeIdx = -1;
+  let triggerStart = -1;
+
+  function removeDropdown() {
+    dropdown?.remove();
+    dropdown = null;
+    activeIdx = -1;
+    triggerStart = -1;
+  }
+
+  function showDropdown(matches, caretPos) {
+    removeDropdown();
+    if (!matches.length) return;
+
+    dropdown = document.createElement('div');
+    dropdown.id = 'mention-dropdown';
+    dropdown.style.cssText = `
+      position:fixed;z-index:99999;background:#fff;border:1px solid #e2e8f0;
+      border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.12);
+      min-width:220px;max-height:220px;overflow-y:auto;padding:4px 0;
+    `;
+
+    matches.forEach((opt, i) => {
+      const item = document.createElement('div');
+      item.dataset.idx = i;
+      item.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 14px;cursor:pointer;transition:background .1s;`;
+      item.innerHTML = opt.isAll
+        ? `<span style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#3b82f6);display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;flex-shrink:0">
+             <i class="fa-solid fa-users" style="font-size:10px"></i>
+           </span>
+           <span style="font-size:13px;font-weight:600;color:#6366f1">@all</span>
+           <span style="font-size:11px;color:#94a3b8;margin-left:auto">everyone</span>`
+        : `<span style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#3b82f6);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0">
+             ${opt.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2)}
+           </span>
+           <span style="font-size:13px;color:#1e293b;font-weight:500">${escHtml(opt.name)}</span>`;
+
+      item.onmouseenter = () => setActive(i);
+      item.onmousedown = (e) => { e.preventDefault(); insertMention(opt); };
+      dropdown.appendChild(item);
+    });
+
+    // Position below caret using textarea bounding rect (approximate)
+    const rect = textarea.getBoundingClientRect();
+    const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 20;
+    const approxLine = textarea.value.substring(0, triggerStart).split('\n').length;
+    const topOffset = Math.min(approxLine * lineHeight, textarea.clientHeight - 4);
+    dropdown.style.left = rect.left + 'px';
+    dropdown.style.top  = (rect.top + topOffset + lineHeight + 4) + 'px';
+
+    document.body.appendChild(dropdown);
+    setActive(0);
+  }
+
+  function setActive(i) {
+    if (!dropdown) return;
+    const items = dropdown.querySelectorAll('[data-idx]');
+    items.forEach((el, idx) => {
+      el.style.background = idx === i ? '#f0f4ff' : '';
+    });
+    activeIdx = i;
+  }
+
+  function insertMention(opt) {
+    const val = textarea.value;
+    const before = val.substring(0, triggerStart);
+    const after  = val.substring(textarea.selectionStart);
+    textarea.value = before + '@' + opt.name + ' ' + after;
+    const newPos = triggerStart + opt.name.length + 2;
+    textarea.setSelectionRange(newPos, newPos);
+    textarea.focus();
+    removeDropdown();
+    textarea.dispatchEvent(new Event('input'));
+  }
+
+  textarea.addEventListener('input', () => {
+    const pos = textarea.selectionStart;
+    const before = textarea.value.substring(0, pos);
+    const atIdx = before.lastIndexOf('@');
+    if (atIdx === -1) { removeDropdown(); return; }
+
+    // Only trigger if @ is at start or preceded by whitespace
+    const charBefore = before[atIdx - 1];
+    if (atIdx > 0 && charBefore && !/\s/.test(charBefore)) { removeDropdown(); return; }
+
+    const query = before.substring(atIdx + 1).toLowerCase();
+    // Stop if query contains a space after more than one word (user moved on)
+    if (query.includes(' ') && query.trim().split(' ').length > 2) { removeDropdown(); return; }
+
+    triggerStart = atIdx;
+    const matches = options.filter(o => o.name.toLowerCase().startsWith(query) || (query === '' ));
+    showDropdown(matches, pos);
+  });
+
+  textarea.addEventListener('keydown', (e) => {
+    if (!dropdown) return;
+    const items = dropdown.querySelectorAll('[data-idx]');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActive(Math.min(activeIdx + 1, items.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActive(Math.max(activeIdx - 1, 0));
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      if (activeIdx >= 0 && activeIdx < options.length) {
+        e.preventDefault();
+        const matches = Array.from(items).map((_, i) => {
+          const allOpts = options.filter(o => {
+            const before = textarea.value.substring(0, textarea.selectionStart);
+            const atIdx2 = before.lastIndexOf('@');
+            const q = atIdx2 >= 0 ? before.substring(atIdx2 + 1).toLowerCase() : '';
+            return o.name.toLowerCase().startsWith(q) || q === '';
+          });
+          return allOpts[activeIdx];
+        });
+        if (matches[0]) insertMention(matches[0]);
+      }
+    } else if (e.key === 'Escape') {
+      removeDropdown();
+    }
+  });
+
+  textarea.addEventListener('blur', () => {
+    // Small delay so mousedown on dropdown item fires first
+    setTimeout(removeDropdown, 150);
+  });
+
+  textarea.addEventListener('scroll', removeDropdown);
+  window.addEventListener('resize', removeDropdown, { once: false });
+}
+
+function escHtml(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 async function refreshNotifBadge() {

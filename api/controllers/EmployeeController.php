@@ -349,17 +349,35 @@ class EmployeeController {
             }
         }
         // @mentions
-        preg_match_all('/@([\w\s]+?)(?=\s|$|[,!?.])/u', $b['content'], $mm);
-        foreach (array_unique($mm[1] ?? []) as $mname) {
-            $mname = trim($mname); if (!$mname) continue;
-            $mu = $this->db->prepare("SELECT id, email, name FROM users WHERE company_id=? AND name LIKE ? LIMIT 1");
-            $mu->execute([$cid, '%'.$mname.'%']);
-            if ($mRow = $mu->fetch()) {
-                if ($mRow['id'] == $uid) continue;
-                NotificationController::create($this->db, $mRow['id'], 'mention', "{$this->authUser['name']} mentioned you in a comment", $taskId);
-                EmailService::mentionNotify($mRow['email'], $mRow['name'], $this->authUser['name'], $ti['title'], $b['content']);
+        $content = $b['content'];
+        if (preg_match('/@all\b/i', $content)) {
+            $allU = $this->db->prepare("SELECT id, email, name FROM users WHERE company_id=? AND is_active=1 AND id!=?");
+            $allU->execute([$cid, $uid]);
+            foreach ($allU->fetchAll() as $uRow) {
+                NotificationController::create($this->db, $uRow['id'], 'mention',
+                    "{$this->authUser['name']} mentioned everyone in a comment", $taskId);
+                EmailService::mentionNotify($uRow['email'], $uRow['name'], $this->authUser['name'], $ti['title'], $content);
+            }
+        } else {
+            preg_match_all('/@([\w\s]+?)(?=\s|$|[,!?.])/u', $content, $mm);
+            foreach (array_unique($mm[1] ?? []) as $mname) {
+                $mname = trim($mname); if (!$mname) continue;
+                $mu = $this->db->prepare("SELECT id, email, name FROM users WHERE company_id=? AND name LIKE ? LIMIT 1");
+                $mu->execute([$cid, '%'.$mname.'%']);
+                if ($mRow = $mu->fetch()) {
+                    if ($mRow['id'] == $uid) continue;
+                    NotificationController::create($this->db, $mRow['id'], 'mention', "{$this->authUser['name']} mentioned you in a comment", $taskId);
+                    EmailService::mentionNotify($mRow['email'], $mRow['name'], $this->authUser['name'], $ti['title'], $content);
+                }
             }
         }
+    }
+
+    public function listCompanyUsers(): void {
+        $cid = $this->authUser['company_id'];
+        $stmt = $this->db->prepare('SELECT id, name FROM users WHERE company_id=? AND is_active=1 ORDER BY name');
+        $stmt->execute([$cid]);
+        echo json_encode(['status' => 'ok', 'data' => $stmt->fetchAll()]);
     }
 
     // ── Checklist Subtasks ────────────────────────────────────────────────────

@@ -28,7 +28,8 @@ async function renderCalendar(role) {
 
   try {
     const isManager = _calRole === 'manager';
-    _calTasks = isManager ? await api.manager.listTasks() : await api.employee.listTasks();
+    const calResp = isManager ? await api.manager.listTasks() : await api.employee.listTasks();
+    _calTasks = Array.isArray(calResp) ? calResp : (calResp.data || []);
     renderCalGrid();
   } catch(err) { showToast(err.message, 'error'); }
 }

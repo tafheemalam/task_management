@@ -1127,55 +1127,7 @@ async function deleteTimeLog(taskId, logId) {
 // ── @Mention Autocomplete ─────────────────────────────────────────────────────
 
 function initMentionAutocomplete(textareaId, users) {
-  const ta = document.getElementById(textareaId);
-  if (!ta || !users?.length) return;
-
-  let dropdown = null;
-
-  ta.addEventListener('input', () => {
-    const val = ta.value;
-    const cursor = ta.selectionStart;
-    const textBefore = val.substring(0, cursor);
-    const atMatch = textBefore.match(/@(\w*)$/);
-
-    if (dropdown) { dropdown.remove(); dropdown = null; }
-    if (!atMatch) return;
-
-    const query = atMatch[1].toLowerCase();
-    const matches = users.filter(u => u.name.toLowerCase().includes(query)).slice(0, 5);
-    if (!matches.length) return;
-
-    dropdown = document.createElement('div');
-    dropdown.className = 'absolute z-50 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden';
-    dropdown.style.cssText = 'min-width:200px;max-width:280px';
-
-    matches.forEach(u => {
-      const item = document.createElement('div');
-      item.className = 'flex items-center gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-indigo-50 transition-colors';
-      item.innerHTML = `
-        <div class="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0"
-             style="background:linear-gradient(135deg,#6366f1,#3b82f6)">${avatarInitials(u.name)}</div>
-        <span class="text-sm font-medium text-gray-700">${u.name}</span>`;
-      item.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        const start  = textBefore.lastIndexOf('@');
-        const before = val.substring(0, start);
-        const after  = val.substring(cursor);
-        ta.value = before + '@' + u.name + ' ' + after;
-        ta.focus();
-        if (dropdown) { dropdown.remove(); dropdown = null; }
-      });
-      dropdown.appendChild(item);
-    });
-
-    const rect = ta.getBoundingClientRect();
-    dropdown.style.position = 'fixed';
-    dropdown.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
-    dropdown.style.left = (rect.left  + window.scrollX) + 'px';
-    document.body.appendChild(dropdown);
-  });
-
-  document.addEventListener('click', () => { if (dropdown) { dropdown.remove(); dropdown = null; } }, { capture: true });
+  setupMentionAutocomplete(document.getElementById(textareaId), users);
 }
 
 // ── Checklist ─────────────────────────────────────────────────────────────────

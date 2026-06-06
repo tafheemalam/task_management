@@ -24,7 +24,8 @@
       "Bash(python -c \"import sys,re; body=sys.stdin.read\\(\\); matches=re.findall\\(r'\\(client_shares[^<]{0,200}\\)', body\\); print\\('\\\\n'.join\\(matches[:3]\\)\\)\")",
       "Bash(Select-String -Pattern \"client_shares|All tables\")",
       "Bash(Select-Object -First 5)",
-      "PowerShell($result = Invoke-WebRequest -Uri \"http://localhost:8080/migrate.php\" -UseBasicParsing; $result.Content | Select-String -Pattern \"client_shares|All tables\")"
+      "PowerShell($result = Invoke-WebRequest -Uri \"http://localhost:8080/migrate.php\" -UseBasicParsing; $result.Content | Select-String -Pattern \"client_shares|All tables\")",
+      "Bash(xargs grep -l \"api\\\\.manager\\\\|api\\\\.auth\")"
     ]
   }
 }

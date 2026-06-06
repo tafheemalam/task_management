@@ -40,6 +40,11 @@ const api = {
     verify2FA: (tempToken, code) => api.post('/auth/2fa/verify', { temp_token: tempToken, code }),
   },
 
+  invite: {
+    validate: (token) => api.get(`/invite/${token}`),
+    accept: (d) => api.post('/invite/accept', d),
+  },
+
   getProfile: () => api.get('/profile'),
   setup2FA: () => api.post('/profile/2fa/setup'),
   enable2FA: (code) => api.post('/profile/2fa/enable', { code }),
@@ -65,6 +70,9 @@ const api = {
   manager: {
     stats: () => api.get('/manager/stats'),
     listUsers: () => api.get('/manager/users'),
+    listInvitations: () => api.get('/manager/invitations'),
+    createInvitation: (email) => api.post('/manager/invitations', { email }),
+    revokeInvitation: (id) => api.del(`/manager/invitations/${id}`),
     createUser: (d) => api.post('/manager/users', d),
     updateUser: (id, d) => api.put(`/manager/users/${id}`, d),
     toggleUserStatus: (id) => api.put(`/manager/users/${id}/toggle-status`),
@@ -111,6 +119,16 @@ const api = {
     deleteWebhook: (id) => api.del(`/manager/webhooks/${id}`),
     testWebhook: (id) => api.post(`/manager/webhooks/${id}/test`),
     getWorkload: () => api.get('/manager/workload'),
+    analytics: () => api.get('/manager/analytics'),
+    // Sprints
+    listSprints: () => api.get('/manager/sprints'),
+    createSprint: (d) => api.post('/manager/sprints', d),
+    updateSprint: (id, d) => api.put(`/manager/sprints/${id}`, d),
+    deleteSprint: (id) => api.del(`/manager/sprints/${id}`),
+    listSprintTasks: (id) => api.get(`/manager/sprints/${id}/tasks`),
+    addSprintTask: (id, taskId) => api.post(`/manager/sprints/${id}/tasks`, { task_id: taskId }),
+    removeSprintTask: (id, taskId) => api.del(`/manager/sprints/${id}/tasks/${taskId}`),
+    sprintBurndown: (id) => api.get(`/manager/sprints/${id}/burndown`),
     listApiKeys: () => api.get('/api-keys'),
     createApiKey: (d) => api.post('/api-keys', d),
     deleteApiKey: (id) => api.del(`/api-keys/${id}`),
@@ -184,6 +202,7 @@ const api = {
     // Duplicate
     duplicateTask: (taskId) => api.post(`/employee/tasks/${taskId}/duplicate`),
     listTaskTemplates: () => api.get('/employee/task-templates'),
+    listCompanyUsers: () => api.get('/employee/company-users'),
   },
   share: {
     get: (token) => api.get(`/share/${token}`),

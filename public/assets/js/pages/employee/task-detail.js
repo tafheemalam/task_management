@@ -37,10 +37,14 @@ async function renderEmployeeTaskDetail(params = {}) {
 
 async function loadEmpTaskDetail(taskId) {
   try {
-    const task = await api.employee.getTask(taskId);
+    const [task, usersResp] = await Promise.all([
+      api.employee.getTask(taskId),
+      api.employee.listCompanyUsers().catch(() => ({ data: [] })),
+    ]);
     _empCurrentTask = task;
     renderEmpTaskDetail(task);
     if (task.assignee_id) loadEmpKudos(taskId);
+    setupMentionAutocomplete(document.getElementById('emp-new-comment'), usersResp.data || []);
   } catch (err) {
     document.getElementById('emp-task-detail').innerHTML =
       `<div class="text-center py-12 text-red-500">${err.message}</div>`;
@@ -287,7 +291,7 @@ function renderEmpTaskDetail(task) {
                 </div>
                 <div class="flex-1">
                   <textarea id="emp-new-comment" class="input text-sm" rows="2"
-                            placeholder="Write a comment..."></textarea>
+                            placeholder="Write a comment… Use @name or @all to mention"></textarea>
                   <button class="btn-primary text-xs mt-2" onclick="submitEmpComment(${task.id})">
                     <i class="fa-solid fa-paper-plane"></i> Post Comment
                   </button>

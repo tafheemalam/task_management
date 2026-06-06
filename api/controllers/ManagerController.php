@@ -731,10 +731,23 @@ class ManagerController {
     }
 
     private function processMentions(int $taskId, string $content, string $taskTitle): void {
+        $cid = $this->companyId();
+        $uid = $this->authUser['id'];
+
+        // @all — notify every active company user except the commenter
+        if (preg_match('/@all\b/i', $content)) {
+            $all = $this->db->prepare("SELECT id, email, name FROM users WHERE company_id=? AND is_active=1 AND id!=?");
+            $all->execute([$cid, $uid]);
+            foreach ($all->fetchAll() as $uRow) {
+                NotificationController::create($this->db, $uRow['id'], 'mention',
+                    "{$this->authUser['name']} mentioned everyone in a comment", $taskId);
+                EmailService::mentionNotify($uRow['email'], $uRow['name'], $this->authUser['name'], $taskTitle, $content);
+            }
+            return;
+        }
+
         preg_match_all('/@([\w\s]+?)(?=\s|$|[,!?.])/u', $content, $m);
         $names = array_unique($m[1] ?? []);
-        $cid   = $this->companyId();
-        $uid   = $this->authUser['id'];
         foreach ($names as $name) {
             $name = trim($name);
             if (!$name) continue;
@@ -1553,5 +1566,439 @@ class ManagerController {
 
         $this->db->prepare('DELETE FROM client_shares WHERE token = ?')->execute([$token]);
         echo json_encode(['status' => 'ok']);
+    }
+
+    // ── Sprints ───────────────────────────────────────────────────────────────
+
+    private function ensureSprintTables(): void {
+        $this->db->exec(
+            "CREATE TABLE IF NOT EXISTS sprints (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                company_id INT NOT NULL,
+                workflow_id INT NULL,
+                name VARCHAR(255) NOT NULL,
+                goal TEXT NULL,
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                status ENUM('planning','active','completed') DEFAULT 'planning',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_sprints_company (company_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+        $this->db->exec(
+            "CREATE TABLE IF NOT EXISTS sprint_tasks (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                sprint_id INT NOT NULL,
+                task_id INT NOT NULL,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_sprint_task (sprint_id, task_id),
+                INDEX idx_st_sprint (sprint_id),
+                INDEX idx_st_task (task_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+    }
+
+    public function listSprints(): void {
+        $cid = $this->companyId();
+        $this->ensureSprintTables();
+        $stmt = $this->db->prepare(
+            "SELECT s.*, w.name as workflow_name,
+                    COUNT(DISTINCT st.task_id) as total_tasks,
+                    SUM(CASE WHEN (LOWER(ws.name) LIKE '%done%' OR LOWER(ws.name) LIKE '%complet%' OR LOWER(ws.name) LIKE '%closed%') THEN 1 ELSE 0 END) as completed_tasks
+             FROM sprints s
+             LEFT JOIN workflows w ON s.workflow_id = w.id
+             LEFT JOIN sprint_tasks st ON st.sprint_id = s.id
+             LEFT JOIN tasks t ON t.id = st.task_id
+             LEFT JOIN workflow_stages ws ON t.stage_id = ws.id
+             WHERE s.company_id = ?
+             GROUP BY s.id
+             ORDER BY FIELD(s.status,'active','planning','completed'), s.start_date DESC"
+        );
+        $stmt->execute([$cid]);
+        echo json_encode(['status' => 'ok', 'data' => $stmt->fetchAll()]);
+    }
+
+    public function createSprint(): void {
+        $cid = $this->companyId();
+        $this->ensureSprintTables();
+        $b = json_decode(file_get_contents('php://input'), true) ?? [];
+        if (empty($b['name']) || empty($b['start_date']) || empty($b['end_date'])) {
+            http_response_code(400); echo json_encode(['error' => 'name, start_date, end_date required']); return;
+        }
+        $stmt = $this->db->prepare(
+            "INSERT INTO sprints (company_id, workflow_id, name, goal, start_date, end_date, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?)"
+        );
+        $stmt->execute([
+            $cid,
+            !empty($b['workflow_id']) ? (int)$b['workflow_id'] : null,
+            $b['name'],
+            $b['goal'] ?? null,
+            $b['start_date'],
+            $b['end_date'],
+            $b['status'] ?? 'planning',
+        ]);
+        echo json_encode(['status' => 'ok', 'id' => (int)$this->db->lastInsertId()]);
+    }
+
+    public function updateSprint(int $id): void {
+        $cid = $this->companyId();
+        $this->ensureSprintTables();
+        $chk = $this->db->prepare('SELECT id FROM sprints WHERE id=? AND company_id=?');
+        $chk->execute([$id, $cid]);
+        if (!$chk->fetch()) { http_response_code(404); echo json_encode(['error' => 'Not found']); return; }
+        $b = json_decode(file_get_contents('php://input'), true) ?? [];
+        $this->db->prepare(
+            "UPDATE sprints SET name=?, goal=?, start_date=?, end_date=?, status=?, workflow_id=? WHERE id=?"
+        )->execute([
+            $b['name'], $b['goal'] ?? null, $b['start_date'], $b['end_date'],
+            $b['status'] ?? 'planning',
+            !empty($b['workflow_id']) ? (int)$b['workflow_id'] : null,
+            $id,
+        ]);
+        echo json_encode(['status' => 'ok']);
+    }
+
+    public function deleteSprint(int $id): void {
+        $cid = $this->companyId();
+        $this->ensureSprintTables();
+        $chk = $this->db->prepare('SELECT id FROM sprints WHERE id=? AND company_id=?');
+        $chk->execute([$id, $cid]);
+        if (!$chk->fetch()) { http_response_code(404); echo json_encode(['error' => 'Not found']); return; }
+        $this->db->prepare('DELETE FROM sprint_tasks WHERE sprint_id=?')->execute([$id]);
+        $this->db->prepare('DELETE FROM sprints WHERE id=?')->execute([$id]);
+        echo json_encode(['status' => 'ok']);
+    }
+
+    public function listSprintTasks(int $sprintId): void {
+        $cid = $this->companyId();
+        $this->ensureSprintTables();
+        $chk = $this->db->prepare('SELECT id FROM sprints WHERE id=? AND company_id=?');
+        $chk->execute([$sprintId, $cid]);
+        if (!$chk->fetch()) { http_response_code(404); echo json_encode(['error' => 'Not found']); return; }
+        $stmt = $this->db->prepare(
+            "SELECT t.id, t.title, t.priority, t.due_date,
+                    ws.name as stage_name, ws.color as stage_color,
+                    u.name as assignee_name, w.name as project_name
+             FROM tasks t
+             JOIN sprint_tasks st ON st.task_id = t.id
+             LEFT JOIN workflow_stages ws ON t.stage_id = ws.id
+             LEFT JOIN users u ON t.assignee_id = u.id
+             LEFT JOIN workflows w ON t.workflow_id = w.id
+             WHERE st.sprint_id = ? AND t.company_id = ?
+             ORDER BY t.priority DESC, t.title ASC"
+        );
+        $stmt->execute([$sprintId, $cid]);
+        echo json_encode(['status' => 'ok', 'data' => $stmt->fetchAll()]);
+    }
+
+    public function addSprintTask(int $sprintId): void {
+        $cid = $this->companyId();
+        $this->ensureSprintTables();
+        $chk = $this->db->prepare('SELECT id FROM sprints WHERE id=? AND company_id=?');
+        $chk->execute([$sprintId, $cid]);
+        if (!$chk->fetch()) { http_response_code(404); echo json_encode(['error' => 'Not found']); return; }
+        $b      = json_decode(file_get_contents('php://input'), true) ?? [];
+        $taskId = (int)($b['task_id'] ?? 0);
+        if (!$taskId) { http_response_code(400); echo json_encode(['error' => 'task_id required']); return; }
+        $tc = $this->db->prepare('SELECT id FROM tasks WHERE id=? AND company_id=?');
+        $tc->execute([$taskId, $cid]);
+        if (!$tc->fetch()) { http_response_code(404); echo json_encode(['error' => 'Task not found']); return; }
+        $this->db->prepare('INSERT IGNORE INTO sprint_tasks (sprint_id, task_id) VALUES (?,?)')->execute([$sprintId, $taskId]);
+        echo json_encode(['status' => 'ok']);
+    }
+
+    public function removeSprintTask(int $sprintId, int $taskId): void {
+        $cid = $this->companyId();
+        $this->ensureSprintTables();
+        $chk = $this->db->prepare('SELECT id FROM sprints WHERE id=? AND company_id=?');
+        $chk->execute([$sprintId, $cid]);
+        if (!$chk->fetch()) { http_response_code(404); echo json_encode(['error' => 'Not found']); return; }
+        $this->db->prepare('DELETE FROM sprint_tasks WHERE sprint_id=? AND task_id=?')->execute([$sprintId, $taskId]);
+        echo json_encode(['status' => 'ok']);
+    }
+
+    public function sprintBurndown(int $sprintId): void {
+        $cid = $this->companyId();
+        $this->ensureSprintTables();
+        $sprint = $this->db->prepare('SELECT * FROM sprints WHERE id=? AND company_id=?');
+        $sprint->execute([$sprintId, $cid]);
+        $s = $sprint->fetch();
+        if (!$s) { http_response_code(404); echo json_encode(['error' => 'Not found']); return; }
+
+        $totalQ = $this->db->prepare('SELECT COUNT(*) FROM sprint_tasks WHERE sprint_id=?');
+        $totalQ->execute([$sprintId]);
+        $total = (int)$totalQ->fetchColumn();
+
+        $compQ = $this->db->prepare(
+            "SELECT DATE(t.updated_at) as d, COUNT(*) as cnt
+             FROM tasks t
+             JOIN sprint_tasks st ON st.task_id = t.id
+             JOIN workflow_stages ws ON t.stage_id = ws.id
+             WHERE st.sprint_id = ?
+               AND (LOWER(ws.name) LIKE '%done%' OR LOWER(ws.name) LIKE '%complet%' OR LOWER(ws.name) LIKE '%closed%')
+               AND DATE(t.updated_at) BETWEEN ? AND ?
+             GROUP BY DATE(t.updated_at)"
+        );
+        $compQ->execute([$sprintId, $s['start_date'], $s['end_date']]);
+        $byDay = [];
+        foreach ($compQ->fetchAll() as $r) { $byDay[$r['d']] = (int)$r['cnt']; }
+
+        $start      = new \DateTime($s['start_date']);
+        $endFull    = new \DateTime($s['end_date']);
+        $endCap     = new \DateTime(min($s['end_date'], date('Y-m-d')));
+        $sprintDays = (int)$start->diff($endFull)->days + 1;
+
+        $burndown = [];
+        $cumDone  = 0;
+        $dayIdx   = 0;
+        $current  = clone $start;
+        while ($current <= $endCap) {
+            $ds       = $current->format('Y-m-d');
+            $cumDone += $byDay[$ds] ?? 0;
+            $burndown[] = [
+                'date'      => $ds,
+                'remaining' => max(0, $total - $cumDone),
+                'ideal'     => round($total - ($total * $dayIdx / max(1, $sprintDays - 1)), 1),
+            ];
+            $current->modify('+1 day');
+            $dayIdx++;
+        }
+
+        echo json_encode(['status' => 'ok', 'sprint' => $s, 'total' => $total, 'data' => $burndown]);
+    }
+
+    // ── Analytics ─────────────────────────────────────────────────────────────
+
+    public function analytics(): void {
+        $cid = $this->companyId();
+
+        // Overview counts
+        $ov = $this->db->prepare(
+            "SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN (LOWER(ws.name) LIKE '%done%' OR LOWER(ws.name) LIKE '%complet%' OR LOWER(ws.name) LIKE '%closed%') THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN t.due_date < CURDATE()
+                          AND (LOWER(ws.name) NOT LIKE '%done%' AND LOWER(ws.name) NOT LIKE '%complet%' AND LOWER(ws.name) NOT LIKE '%closed%')
+                     THEN 1 ELSE 0 END) as overdue
+             FROM tasks t
+             JOIN workflows w ON t.workflow_id = w.id
+             LEFT JOIN workflow_stages ws ON t.stage_id = ws.id
+             WHERE w.company_id = ?"
+        );
+        $ov->execute([$cid]);
+        $overview = $ov->fetch();
+
+        // Completion rate — tasks created in last 30 days
+        $mo = $this->db->prepare(
+            "SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN (LOWER(ws.name) LIKE '%done%' OR LOWER(ws.name) LIKE '%complet%' OR LOWER(ws.name) LIKE '%closed%') THEN 1 ELSE 0 END) as completed
+             FROM tasks t
+             JOIN workflows w ON t.workflow_id = w.id
+             LEFT JOIN workflow_stages ws ON t.stage_id = ws.id
+             WHERE w.company_id = ? AND t.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)"
+        );
+        $mo->execute([$cid]);
+        $monthly = $mo->fetch();
+        $completionRate = $monthly['total'] > 0 ? round($monthly['completed'] / $monthly['total'] * 100) : 0;
+
+        // Tasks by stage
+        $stageQ = $this->db->prepare(
+            "SELECT COALESCE(ws.name,'No Stage') as stage_name, COALESCE(ws.color,'#94a3b8') as color, COUNT(*) as count
+             FROM tasks t
+             JOIN workflows w ON t.workflow_id = w.id
+             LEFT JOIN workflow_stages ws ON t.stage_id = ws.id
+             WHERE w.company_id = ?
+             GROUP BY ws.id, ws.name, ws.color
+             ORDER BY count DESC"
+        );
+        $stageQ->execute([$cid]);
+        $tasksByStage = $stageQ->fetchAll();
+
+        // Tasks by priority
+        $prioQ = $this->db->prepare(
+            "SELECT COALESCE(priority,'medium') as priority, COUNT(*) as count
+             FROM tasks t
+             JOIN workflows w ON t.workflow_id = w.id
+             WHERE w.company_id = ?
+             GROUP BY priority"
+        );
+        $prioQ->execute([$cid]);
+        $tasksByPriority = ['high' => 0, 'medium' => 0, 'low' => 0];
+        foreach ($prioQ->fetchAll() as $r) {
+            $k = in_array($r['priority'], ['high','medium','low']) ? $r['priority'] : 'medium';
+            $tasksByPriority[$k] += (int)$r['count'];
+        }
+
+        // Weekly velocity — completed tasks per week for last 8 weeks
+        $velQ = $this->db->prepare(
+            "SELECT YEARWEEK(t.updated_at, 1) as yw, COUNT(*) as completed
+             FROM tasks t
+             JOIN workflows w ON t.workflow_id = w.id
+             JOIN workflow_stages ws ON t.stage_id = ws.id
+             WHERE w.company_id = ?
+               AND (LOWER(ws.name) LIKE '%done%' OR LOWER(ws.name) LIKE '%complet%' OR LOWER(ws.name) LIKE '%closed%')
+               AND t.updated_at >= DATE_SUB(NOW(), INTERVAL 8 WEEK)
+             GROUP BY YEARWEEK(t.updated_at, 1)
+             ORDER BY yw ASC"
+        );
+        $velQ->execute([$cid]);
+        $velMap = [];
+        foreach ($velQ->fetchAll() as $r) { $velMap[(string)$r['yw']] = (int)$r['completed']; }
+
+        $velocity = [];
+        for ($i = 7; $i >= 0; $i--) {
+            $ts = strtotime("-{$i} weeks");
+            $yw = date('oW', $ts); // ISO year + zero-padded week
+            $velocity[] = ['label' => date('M j', $ts), 'completed' => $velMap[$yw] ?? 0];
+        }
+
+        // Average cycle time (days) — completed tasks in last 90 days
+        $ctQ = $this->db->prepare(
+            "SELECT AVG(DATEDIFF(t.updated_at, t.created_at)) as avg_days
+             FROM tasks t
+             JOIN workflows w ON t.workflow_id = w.id
+             JOIN workflow_stages ws ON t.stage_id = ws.id
+             WHERE w.company_id = ?
+               AND (LOWER(ws.name) LIKE '%done%' OR LOWER(ws.name) LIKE '%complet%' OR LOWER(ws.name) LIKE '%closed%')
+               AND t.updated_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)"
+        );
+        $ctQ->execute([$cid]);
+        $avgCycleTime = round((float)$ctQ->fetchColumn(), 1);
+
+        // Bottleneck — in-progress stage with most tasks
+        $bnQ = $this->db->prepare(
+            "SELECT ws.name, ws.color, COUNT(*) as count
+             FROM tasks t
+             JOIN workflows w ON t.workflow_id = w.id
+             JOIN workflow_stages ws ON t.stage_id = ws.id
+             WHERE w.company_id = ?
+               AND LOWER(ws.name) NOT LIKE '%done%'
+               AND LOWER(ws.name) NOT LIKE '%complet%'
+               AND LOWER(ws.name) NOT LIKE '%closed%'
+             GROUP BY ws.id, ws.name, ws.color
+             ORDER BY count DESC
+             LIMIT 1"
+        );
+        $bnQ->execute([$cid]);
+        $bottleneck = $bnQ->fetch() ?: null;
+
+        echo json_encode([
+            'status' => 'ok',
+            'data'   => [
+                'total_tasks'       => (int)$overview['total'],
+                'completed_tasks'   => (int)$overview['completed'],
+                'overdue_tasks'     => (int)$overview['overdue'],
+                'completion_rate'   => $completionRate,
+                'avg_cycle_time'    => $avgCycleTime,
+                'bottleneck'        => $bottleneck,
+                'tasks_by_stage'    => $tasksByStage,
+                'tasks_by_priority' => $tasksByPriority,
+                'weekly_velocity'   => $velocity,
+            ],
+        ]);
+    }
+
+    // ── Invitations ───────────────────────────────────────────────────────────
+
+    private function ensureInvitationsTable(): void {
+        $this->db->exec('CREATE TABLE IF NOT EXISTS invitations (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            company_id INT NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            token VARCHAR(64) NOT NULL UNIQUE,
+            expires_at DATETIME NOT NULL,
+            accepted_at DATETIME NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_inv_token (token),
+            INDEX idx_inv_company (company_id)
+        )');
+    }
+
+    public function listInvitations(): void {
+        $this->ensureInvitationsTable();
+        $stmt = $this->db->prepare(
+            'SELECT id, email, expires_at, created_at FROM invitations
+             WHERE company_id=? AND accepted_at IS NULL AND expires_at > NOW()
+             ORDER BY created_at DESC'
+        );
+        $stmt->execute([$this->companyId()]);
+        $rows = $stmt->fetchAll();
+        $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $host  = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        foreach ($rows as &$r) {
+            $r['link'] = "{$proto}://{$host}/?invite={$r['token']}";
+        }
+        echo json_encode($rows);
+    }
+
+    public function createInvitation(): void {
+        $this->ensureInvitationsTable();
+        $data  = json_decode(file_get_contents('php://input'), true);
+        $email = trim($data['email'] ?? '');
+
+        if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Valid email address required']);
+            return;
+        }
+
+        // Email must not belong to an existing user in this company
+        $stmt = $this->db->prepare('SELECT id FROM users WHERE email=? AND company_id=?');
+        $stmt->execute([$email, $this->companyId()]);
+        if ($stmt->fetch()) {
+            http_response_code(409);
+            echo json_encode(['error' => 'A user with this email already exists in your team']);
+            return;
+        }
+
+        // No active pending invitation for this email
+        $stmt = $this->db->prepare(
+            'SELECT id FROM invitations WHERE email=? AND company_id=? AND accepted_at IS NULL AND expires_at > NOW()'
+        );
+        $stmt->execute([$email, $this->companyId()]);
+        if ($stmt->fetch()) {
+            http_response_code(409);
+            echo json_encode(['error' => 'A pending invitation already exists for this email']);
+            return;
+        }
+
+        $limitErr = $this->checkUsageLimit('users');
+        if ($limitErr) { http_response_code(403); echo json_encode(['error' => $limitErr]); return; }
+
+        $token     = bin2hex(random_bytes(32));
+        $expiresAt = date('Y-m-d H:i:s', strtotime('+7 days'));
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO invitations (company_id, email, token, expires_at) VALUES (?,?,?,?)'
+        );
+        $stmt->execute([$this->companyId(), $email, $token, $expiresAt]);
+        $invId = (int)$this->db->lastInsertId();
+
+        $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $host  = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $link  = "{$proto}://{$host}/?invite={$token}";
+
+        // Best-effort email (may not work on localhost/XAMPP)
+        $emailSent = false;
+        $subject   = 'You\'ve been invited to join TaskFlow';
+        $body      = "Hello,\n\nYou've been invited to join your team on TaskFlow.\n\nClick the link below to set up your account:\n{$link}\n\nThis invitation expires in 7 days.\n\nTaskFlow Team";
+        try { $emailSent = @mail($email, $subject, $body, 'From: noreply@taskflow.app'); } catch (\Throwable $e) {}
+
+        echo json_encode([
+            'id'         => $invId,
+            'email'      => $email,
+            'link'       => $link,
+            'expires_at' => $expiresAt,
+            'email_sent' => $emailSent,
+        ]);
+    }
+
+    public function revokeInvitation(int $id): void {
+        $this->ensureInvitationsTable();
+        $stmt = $this->db->prepare('DELETE FROM invitations WHERE id=? AND company_id=?');
+        $stmt->execute([$id, $this->companyId()]);
+        echo json_encode(['ok' => true]);
     }
 }

@@ -118,6 +118,45 @@ try {
         (new WebhookController())->test((int)$m[1]); exit;
     }
 
+    // Invitation public routes (no auth required)
+    if (preg_match('#^/invite/([a-f0-9]{64})$#', $path, $m) && $method === 'GET') {
+        $db = Database::getInstance();
+        $db->exec('CREATE TABLE IF NOT EXISTS invitations (id INT AUTO_INCREMENT PRIMARY KEY, company_id INT NOT NULL, email VARCHAR(255) NOT NULL, token VARCHAR(64) NOT NULL UNIQUE, expires_at DATETIME NOT NULL, accepted_at DATETIME NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)');
+        $stmt = $db->prepare('SELECT email, expires_at FROM invitations WHERE token=? AND accepted_at IS NULL AND expires_at > NOW()');
+        $stmt->execute([$m[1]]);
+        $row = $stmt->fetch();
+        if (!$row) { http_response_code(404); echo json_encode(['error' => 'Invitation not found or has expired']); exit; }
+        echo json_encode(['email' => $row['email'], 'expires_at' => $row['expires_at']]);
+        exit;
+    }
+
+    if ($path === '/invite/accept' && $method === 'POST') {
+        $body     = json_decode(file_get_contents('php://input'), true);
+        $token    = trim($body['token'] ?? '');
+        $name     = trim($body['name'] ?? '');
+        $password = $body['password'] ?? '';
+        if (!$token || !$name || !$password) {
+            http_response_code(400); echo json_encode(['error' => 'All fields are required']); exit;
+        }
+        if (strlen($password) < 6) {
+            http_response_code(400); echo json_encode(['error' => 'Password must be at least 6 characters']); exit;
+        }
+        $db   = Database::getInstance();
+        $stmt = $db->prepare('SELECT * FROM invitations WHERE token=? AND accepted_at IS NULL AND expires_at > NOW()');
+        $stmt->execute([$token]);
+        $inv  = $stmt->fetch();
+        if (!$inv) { http_response_code(404); echo json_encode(['error' => 'Invitation not found or has expired']); exit; }
+        $stmt = $db->prepare('SELECT id FROM users WHERE email=?');
+        $stmt->execute([$inv['email']]);
+        if ($stmt->fetch()) { http_response_code(409); echo json_encode(['error' => 'This email is already registered']); exit; }
+        $hash = password_hash($password, PASSWORD_BCRYPT);
+        $db->prepare("INSERT INTO users (company_id, name, email, password, role, can_create_tasks, is_active) VALUES (?,?,?,?,'employee',0,1)")
+           ->execute([(int)$inv['company_id'], $name, $inv['email'], $hash]);
+        $db->prepare('UPDATE invitations SET accepted_at=NOW() WHERE id=?')->execute([(int)$inv['id']]);
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+
     // Public subscription routes (no auth required)
     if ($path === '/subscribe' && $method === 'POST') { (new SubscribeController())->submit(); exit; }
     if ($path === '/subscribe/packages' && $method === 'GET') { (new SubscribeController())->listPackages(); exit; }
@@ -313,6 +352,18 @@ try {
             $sub === 'company-users' && $method === 'GET' => $mgr->listCompanyUsers(),
             $sub === 'project-stats' && $method === 'GET' => $mgr->managerProjectStats(),
             $sub === 'workload' && $method === 'GET' => $mgr->workload(),
+            $sub === 'invitations' && $method === 'GET' => $mgr->listInvitations(),
+            $sub === 'invitations' && $method === 'POST' => $mgr->createInvitation(),
+            $sub === 'invitations' && $id && $method === 'DELETE' => $mgr->revokeInvitation($id),
+            $sub === 'analytics' && $method === 'GET' => $mgr->analytics(),
+            $sub === 'sprints' && $method === 'GET' && !$id => $mgr->listSprints(),
+            $sub === 'sprints' && $method === 'POST' && !$id => $mgr->createSprint(),
+            $sub === 'sprints' && $id && $method === 'PUT' && !$action => $mgr->updateSprint($id),
+            $sub === 'sprints' && $id && $method === 'DELETE' && !$action => $mgr->deleteSprint($id),
+            $sub === 'sprints' && $id && $action === 'tasks' && $method === 'GET' => $mgr->listSprintTasks($id),
+            $sub === 'sprints' && $id && $action === 'tasks' && $method === 'POST' => $mgr->addSprintTask($id),
+            $sub === 'sprints' && $id && $action === 'tasks' && $method === 'DELETE' && isset($segments[4]) => $mgr->removeSprintTask($id, (int)$segments[4]),
+            $sub === 'sprints' && $id && $action === 'burndown' && $method === 'GET' => $mgr->sprintBurndown($id),
             default => (function() { http_response_code(404); echo json_encode(['error' => 'Not found']); })()
         };
         exit;
@@ -334,6 +385,7 @@ try {
             $sub === 'tasks' && $id && $action === 'stage' && $method === 'PUT' => $emp->updateStage($id),
             $sub === 'tasks' && $id && $action === 'time-logs' && $method === 'GET' => $emp->listTimeLogs($id),
             $sub === 'tasks' && $id && $action === 'time-logs' && $method === 'POST' => $emp->addTimeLog($id),
+            $sub === 'company-users' && $method === 'GET' => $emp->listCompanyUsers(),
             $sub === 'tasks' && $id && $action === 'comments' && $method === 'POST' => $emp->addComment($id),
             $sub === 'tasks' && $id && $action === 'attachments' && $method === 'POST' => $emp->uploadAttachment($id),
             $sub === 'tasks' && $id && $action === 'attachments' && $method === 'DELETE' && isset($segments[4]) => $emp->deleteAttachment($id, (int)$segments[4]),

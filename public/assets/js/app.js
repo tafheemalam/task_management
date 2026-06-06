@@ -31,6 +31,7 @@ const routes = {
   'employee-calendar': () => renderCalendar('employee'),
 
   // Shared
+  'accept-invitation': (p) => renderAcceptInvitation(p),
   'shared-profile': () => renderProfile(),
   'client-share': (p) => renderClientShare(p),
 
@@ -39,6 +40,8 @@ const routes = {
 
   // Manager enterprise
   'manager-workload': () => renderWorkload(),
+  'manager-analytics': () => renderAnalytics(),
+  'manager-sprints':   () => renderSprints(),
   'manager-api-keys': () => renderApiKeys(),
   'manager-custom-fields': () => renderCustomFields(),
   'manager-templates': () => renderTemplates(),
@@ -72,6 +75,13 @@ async function logout() {
 // ─── Boot ──────────────────────────────────────────────────────────────────────
 
 async function boot() {
+  // Invitation accept — no auth needed
+  const inviteToken = new URLSearchParams(window.location.search).get('invite');
+  if (inviteToken) {
+    navigate('accept-invitation', { token: inviteToken });
+    return;
+  }
+
   // Client share portal — no auth needed
   const shareToken = new URLSearchParams(window.location.search).get('share');
   if (shareToken) {

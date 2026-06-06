@@ -3,6 +3,9 @@ async function renderManagerGantt() {
     <div class="p-6">
       ${pageHeader('Gantt Chart', 'Task timeline by project', `
         <div class="flex items-center gap-2">
+          <button class="btn-secondary whitespace-nowrap" onclick="navigate('manager-tasks')">
+            <i class="fa-solid fa-arrow-left"></i> Back to Tasks
+          </button>
           <select id="gantt-wf-filter" class="input w-auto text-sm" onchange="loadGantt()">
             <option value="">All Projects</option>
           </select>
@@ -36,11 +39,11 @@ let _ganttWorkflows = [];
 
 async function loadGantt() {
   try {
-    const [tasks, workflows] = await Promise.all([
+    const [tasksResp, workflows] = await Promise.all([
       api.manager.listTasks(),
       api.manager.listWorkflows(),
     ]);
-    _ganttTasks    = tasks;
+    _ganttTasks    = Array.isArray(tasksResp) ? tasksResp : (tasksResp.data || []);
     _ganttWorkflows = workflows;
 
     // Populate project filter
